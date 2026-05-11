@@ -1,0 +1,83 @@
+<UserControl x:Class="PowerDesk.Views.SettingsPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="{DynamicResource SurfaceBaseBrush}"
+             Foreground="{DynamicResource TextPrimaryBrush}">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="32,24">
+        <StackPanel MaxWidth="780" HorizontalAlignment="Stretch">
+
+            <TextBlock Style="{StaticResource TextDisplay}" Text="Settings"/>
+            <TextBlock Style="{StaticResource TextCaption}" Margin="0,4,0,24"
+                       Text="Preferences that apply to PowerDesk and all installed tools."/>
+
+            <!-- Appearance -->
+            <Border Style="{StaticResource Card}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Style="{StaticResource TextSubtitle}" Text="Appearance"/>
+                    <Grid Margin="0,12,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="220"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="Theme"/>
+                            <TextBlock Text="Choose how PowerDesk looks." Style="{StaticResource TextCaption}"/>
+                        </StackPanel>
+                        <ComboBox Grid.Column="1" x:Name="ThemeBox" SelectionChanged="Theme_Changed">
+                            <ComboBoxItem Content="Dark" Tag="Dark"/>
+                            <ComboBoxItem Content="Light" Tag="Light"/>
+                            <ComboBoxItem Content="OLED Dark" Tag="OledDark"/>
+                        </ComboBox>
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <!-- Behavior -->
+            <Border Style="{StaticResource Card}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Style="{StaticResource TextSubtitle}" Text="Behavior"/>
+                    <CheckBox x:Name="StartMinimizedBox" Style="{StaticResource ToggleSwitch}"
+                              Content="Start PowerDesk minimized" Margin="0,14,0,0" Checked="Settings_Changed" Unchecked="Settings_Changed"/>
+                    <CheckBox x:Name="TrayOnCloseBox" Style="{StaticResource ToggleSwitch}"
+                              Content="Minimize to tray on close" Margin="0,10,0,0" Checked="Settings_Changed" Unchecked="Settings_Changed"/>
+                    <CheckBox x:Name="RunAtStartupBox" Style="{StaticResource ToggleSwitch}"
+                              Content="Run PowerDesk at Windows startup (HKCU)" Margin="0,10,0,0"
+                              Checked="RunAtStartup_Changed" Unchecked="RunAtStartup_Changed"/>
+                    <CheckBox x:Name="GlobalHotkeysBox" Style="{StaticResource ToggleSwitch}"
+                              Content="Enable global hotkeys" Margin="0,10,0,0"
+                              Checked="GlobalHotkeys_Changed" Unchecked="GlobalHotkeys_Changed"/>
+                </StackPanel>
+            </Border>
+
+            <!-- Data -->
+            <Border Style="{StaticResource Card}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Style="{StaticResource TextSubtitle}" Text="Data"/>
+                    <TextBlock Style="{StaticResource TextCaption}" Margin="0,4,0,0"
+                               Text="Settings, presets, and history live under %LocalAppData%\PowerDesk\."/>
+                    <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
+                        <Button Content="Open settings folder" Click="OpenFolder_Click"/>
+                        <Button Content="Export logs" Click="ExportLogs_Click" Margin="10,0,0,0"/>
+                        <Button Style="{StaticResource DangerButton}" Content="Reset all data" Click="ResetData_Click" Margin="10,0,0,0"/>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- Diagnostics -->
+            <Border Style="{StaticResource Card}">
+                <StackPanel>
+                    <TextBlock Style="{StaticResource TextSubtitle}" Text="Diagnostics"/>
+                    <TextBlock Style="{StaticResource TextCaption}" Margin="0,4,0,0">
+                        <Run Text="Log file: "/>
+                        <Run x:Name="LogPathRun" FontFamily="Consolas"/>
+                    </TextBlock>
+                    <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                        <Button Content="Open log file" Click="OpenLog_Click"/>
+                        <Button Content="Relaunch as administrator" Click="RelaunchAdmin_Click" Margin="10,0,0,0"/>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

@@ -1,0 +1,22 @@
+<Application x:Class="PowerDesk.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:conv="clr-namespace:PowerDesk.Shared.Converters"
+             ShutdownMode="OnExplicitShutdown">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <!-- Active theme dictionary (replaced at runtime by ThemeService) -->
+                <ResourceDictionary x:Name="ActiveTheme" Source="Resources/Themes/Dark.xaml"/>
+                <ResourceDictionary Source="Resources/Styles.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+
+            <conv:BoolToVisibilityConverter x:Key="BoolToVis"/>
+            <conv:BoolToVisibilityConverter x:Key="InverseBoolToVis" Invert="True"/>
+            <conv:NullToVisibilityConverter x:Key="NullToVis"/>
+            <conv:StringEqualsToBoolConverter x:Key="StringEqualsToBool"/>
+            <conv:StringEqualsConverter x:Key="StringEquals"/>
+            <conv:InverseBoolConverter x:Key="InverseBool"/>
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

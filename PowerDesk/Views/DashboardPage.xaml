@@ -1,0 +1,114 @@
+<UserControl x:Class="PowerDesk.Views.DashboardPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="{DynamicResource SurfaceBaseBrush}"
+             Foreground="{DynamicResource TextPrimaryBrush}">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="32,24">
+        <StackPanel MaxWidth="1100" HorizontalAlignment="Stretch">
+
+            <TextBlock Style="{StaticResource TextDisplay}" Text="Dashboard"/>
+            <TextBlock Style="{StaticResource TextCaption}" Margin="0,4,0,24"
+                       Text="A quick view of every tool installed in PowerDesk."/>
+
+            <!-- Tool cards -->
+            <TextBlock Style="{StaticResource TextSubtitle}" Text="Tools" Margin="0,0,0,12"/>
+            <ItemsControl x:Name="ToolCards">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <WrapPanel ItemWidth="340" ItemHeight="180"/>
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Border Style="{StaticResource Card}" Margin="0,0,16,16">
+                            <DockPanel>
+                                <StackPanel DockPanel.Dock="Top">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Border Width="32" Height="32" Background="{DynamicResource AccentSoftBrush}" CornerRadius="6">
+                                            <Path Width="16" Height="16" Stretch="Uniform"
+                                                  HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                  Fill="{DynamicResource AccentBrush}"
+                                                  Data="{Binding IconGeometry}"/>
+                                        </Border>
+                                        <TextBlock Text="{Binding DisplayName}" Style="{StaticResource TextSubtitle}"
+                                                   Margin="12,0,0,0" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                    <TextBlock Text="{Binding Description}" Style="{StaticResource TextCaption}"
+                                               Margin="0,10,0,0" TextWrapping="Wrap"/>
+                                </StackPanel>
+                                <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" VerticalAlignment="Bottom" Margin="0,12,0,0">
+                                    <Button Style="{StaticResource PrimaryButton}" Content="Open"
+                                            Click="OpenTool_Click" Tag="{Binding Id}"/>
+                                    <Border Style="{StaticResource Pill}" Margin="10,0,0,0"
+                                            Visibility="{Binding NeedsAdminBadge, Converter={StaticResource BoolToVis}}">
+                                        <TextBlock Text="Admin unlocks more" Foreground="{DynamicResource WarningBrush}" FontSize="11"/>
+                                    </Border>
+                                </StackPanel>
+                                <StackPanel/>
+                            </DockPanel>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <!-- Health cards -->
+            <TextBlock Style="{StaticResource TextSubtitle}" Text="Health" Margin="0,12,0,12"/>
+            <WrapPanel>
+                <Border Style="{StaticResource Card}" Width="240" Margin="0,0,16,16">
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource TextCaption}" Text="Open windows"/>
+                        <TextBlock x:Name="StatWindows" Text="—" Style="{StaticResource TextDisplay}" Margin="0,2,0,0"/>
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource Card}" Width="240" Margin="0,0,16,16">
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource TextCaption}" Text="Active hotkeys"/>
+                        <TextBlock x:Name="StatHotkeys" Text="—" Style="{StaticResource TextDisplay}" Margin="0,2,0,0"/>
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource Card}" Width="240" Margin="0,0,16,16">
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource TextCaption}" Text="Startup items"/>
+                        <TextBlock x:Name="StatStartup" Text="—" Style="{StaticResource TextDisplay}" Margin="0,2,0,0"/>
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource Card}" Width="240" Margin="0,0,16,16">
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource TextCaption}" Text="Orphaned items"/>
+                        <TextBlock x:Name="StatOrphans" Text="—" Style="{StaticResource TextDisplay}"
+                                   Foreground="{DynamicResource WarningBrush}" Margin="0,2,0,0"/>
+                    </StackPanel>
+                </Border>
+            </WrapPanel>
+
+            <!-- Recent actions -->
+            <TextBlock Style="{StaticResource TextSubtitle}" Text="Recent activity" Margin="0,12,0,12"/>
+            <Border Style="{StaticResource Card}">
+                <ItemsControl x:Name="RecentList" MaxHeight="280">
+                    <ItemsControl.Template>
+                        <ControlTemplate>
+                            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                <ItemsPresenter/>
+                            </ScrollViewer>
+                        </ControlTemplate>
+                    </ItemsControl.Template>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Grid Margin="0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="70"/>
+                                    <ColumnDefinition Width="110"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="{Binding TimestampDisplay}" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                <TextBlock Grid.Column="1" Text="{Binding Module}" Foreground="{DynamicResource AccentBrush}"/>
+                                <TextBlock Grid.Column="2" Text="{Binding Description}" TextTrimming="CharacterEllipsis"/>
+                            </Grid>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </Border>
+
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>
