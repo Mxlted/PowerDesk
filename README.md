@@ -50,7 +50,7 @@ PowerDesk starts unelevated. If you toggle something that needs administrator ri
 
 ---
 
-## Build from source (developers)
+## Build from source
 
 Requires the [.NET 9 SDK](https://dotnet.microsoft.com/).
 
