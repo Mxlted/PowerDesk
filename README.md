@@ -4,8 +4,8 @@ A modular, local-first PC tool hub for Windows - inspired by Microsoft PowerToys
 
 The first release ships with two built-in tools:
 
-- **WindowSizer** - resize, snap, pin, center, and reposition windows with pixel precision. Saved size presets, layout presets, multi-monitor support, and global hotkeys.
-- **StartupPilot** - see and control everything Windows runs at sign-in: registry `Run` keys, Startup folders, scheduled tasks, and auto-start services. Per-source filters, impact estimates, orphan detection, change history with undo, and CSV export.
+- **[WindowSizer](https://github.com/Mxlted/WindowSizer)** - resize, snap, pin, center, and reposition windows with pixel precision. Saved size presets, layout presets, multi-monitor support, and global hotkeys.
+- **[StartupPilot](https://github.com/Mxlted/StartupPilot)** - see and control everything Windows runs at sign-in: registry `Run` keys, Startup folders, scheduled tasks, and auto-start services. Per-source filters, impact estimates, orphan detection, change history with undo, and CSV export.
 
 PowerDesk runs entirely on your machine. No account, no sign-in, no telemetry, no network calls.
 
