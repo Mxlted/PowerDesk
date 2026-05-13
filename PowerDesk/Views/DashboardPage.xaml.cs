@@ -24,16 +24,22 @@ public partial class DashboardPage : UserControl
             Id = m.Id,
             DisplayName = m.DisplayName,
             Description = m.Description,
-            IconGeometry = ResolveIconGeometry(m.IconKey),
+            IconGeometry = m.IconGeometry,
             NeedsAdminBadge = m.RequiresAdminForFullControl && !app.Permissions.IsAdministrator,
         }).ToList();
         ToolCards.ItemsSource = cards;
         RecentList.ItemsSource = app.RecentActions.Items;
 
-        Loaded += (_, _) => RefreshStats();
+        // Build the timer in the stopped state; start/stop with the page's visual lifetime so we
+        // don't poll counts when the dashboard isn't on screen.
+        _refreshTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher)
+        {
+            Interval = TimeSpan.FromSeconds(4),
+        };
+        _refreshTimer.Tick += (_, _) => RefreshStats();
 
-        _refreshTimer = new DispatcherTimer(TimeSpan.FromSeconds(4), DispatcherPriority.Background, (_, _) => RefreshStats(), Dispatcher);
-        _refreshTimer.Start();
+        Loaded += (_, _) => { RefreshStats(); _refreshTimer.Start(); };
+        Unloaded += (_, _) => _refreshTimer.Stop();
     }
 
     private void RefreshStats()
@@ -48,7 +54,7 @@ public partial class DashboardPage : UserControl
             }
             if (app.StartupPilotModule is { } sp)
             {
-                StatStartup.Text = sp.ViewModel?.Items?.Count.ToString() ?? "—";
+                StatStartup.Text = sp.ViewModel?.StartupEntryCount.ToString() ?? "—";
                 StatOrphans.Text = sp.ViewModel?.OrphanCount.ToString() ?? "—";
             }
         }
@@ -60,13 +66,6 @@ public partial class DashboardPage : UserControl
         if (sender is Button b && b.Tag is string id)
             App.Instance.Shell?.NavigateTo(id);
     }
-
-    private static string ResolveIconGeometry(string key) => key switch
-    {
-        "WindowSizer"  => "M 3,3 H 21 V 21 H 3 Z M 3,8 H 21 M 8,3 V 21",
-        "StartupPilot" => "M 12,2 L 5,12 H 10 V 22 L 19,10 H 13 Z",
-        _              => "M 4,4 H 20 V 20 H 4 Z",
-    };
 }
 
 public sealed class ToolCardData

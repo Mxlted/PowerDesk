@@ -1,6 +1,7 @@
 <UserControl x:Class="PowerDesk.Modules.StartupPilot.Views.StartupPilotView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:m="clr-namespace:PowerDesk.Modules.StartupPilot.Models"
              Background="{DynamicResource SurfaceBaseBrush}"
              Foreground="{DynamicResource TextPrimaryBrush}">
     <Grid Margin="32,24">
@@ -38,8 +39,8 @@
             <WrapPanel Grid.Row="0">
                 <Border Style="{StaticResource Card}" Margin="0,0,12,12" Width="160" Padding="12,10">
                     <StackPanel>
-                        <TextBlock Text="Total" Style="{StaticResource TextCaption}"/>
-                        <TextBlock Text="{Binding TotalCount}" Style="{StaticResource TextTitle}"/>
+                        <TextBlock Text="Startup entries" Style="{StaticResource TextCaption}"/>
+                        <TextBlock Text="{Binding StartupEntryCount}" Style="{StaticResource TextTitle}"/>
                     </StackPanel>
                 </Border>
                 <Border Style="{StaticResource Card}" Margin="0,0,12,12" Width="160" Padding="12,10">
@@ -66,6 +67,30 @@
                         <TextBlock Text="{Binding HighImpactCount}" Style="{StaticResource TextTitle}" Foreground="{DynamicResource DangerBrush}"/>
                     </StackPanel>
                 </Border>
+                <Border Style="{StaticResource Card}" Margin="0,0,12,12" Width="160" Padding="12,10">
+                    <StackPanel>
+                        <TextBlock Text="Services" Style="{StaticResource TextCaption}"/>
+                        <TextBlock Text="{Binding ServiceCount}" Style="{StaticResource TextTitle}"/>
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource Card}" Margin="0,0,12,12" Width="160" Padding="12,10">
+                    <StackPanel>
+                        <TextBlock Text="Automatic services" Style="{StaticResource TextCaption}"/>
+                        <TextBlock Text="{Binding AutomaticServiceCount}" Style="{StaticResource TextTitle}" Foreground="{DynamicResource SuccessBrush}"/>
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource Card}" Margin="0,0,12,12" Width="160" Padding="12,10">
+                    <StackPanel>
+                        <TextBlock Text="Manual services" Style="{StaticResource TextCaption}"/>
+                        <TextBlock Text="{Binding ManualServiceCount}" Style="{StaticResource TextTitle}" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource Card}" Margin="0,0,12,12" Width="160" Padding="12,10">
+                    <StackPanel>
+                        <TextBlock Text="Disabled services" Style="{StaticResource TextCaption}"/>
+                        <TextBlock Text="{Binding DisabledServiceCount}" Style="{StaticResource TextTitle}" Foreground="{DynamicResource WarningBrush}"/>
+                    </StackPanel>
+                </Border>
             </WrapPanel>
 
             <!-- Filter row -->
@@ -80,19 +105,20 @@
                         <CheckBox Content="Registry"       Margin="14,0,0,0" IsChecked="{Binding FilterRegistry}"/>
                         <CheckBox Content="Startup folder" Margin="14,0,0,0" IsChecked="{Binding FilterStartupFolder}"/>
                         <CheckBox Content="Tasks"          Margin="14,0,0,0" IsChecked="{Binding FilterTaskScheduler}"/>
-                        <CheckBox Content="Services"       Margin="14,0,0,0" IsChecked="{Binding FilterService}"/>
                     </StackPanel>
                     <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                        <ComboBox Width="120" SelectedValuePath="Tag" SelectedValue="{Binding StatusFilter}">
-                            <ComboBoxItem Content="All status"  Tag="All"/>
-                            <ComboBoxItem Content="Enabled"     Tag="Enabled"/>
-                            <ComboBoxItem Content="Disabled"    Tag="Disabled"/>
+                        <ComboBox Width="120" SelectedValuePath="Tag" SelectedValue="{Binding StatusFilter}"
+                                  ToolTip="Filter by enabled/disabled state.">
+                            <ComboBoxItem Content="All status"  Tag="{x:Static m:StartupStatusFilter.All}"/>
+                            <ComboBoxItem Content="Enabled"     Tag="{x:Static m:StartupStatusFilter.Enabled}"/>
+                            <ComboBoxItem Content="Disabled"    Tag="{x:Static m:StartupStatusFilter.Disabled}"/>
                         </ComboBox>
-                        <ComboBox Width="120" Margin="8,0,0,0" SelectedValuePath="Tag" SelectedValue="{Binding ImpactFilter}">
-                            <ComboBoxItem Content="All impact" Tag="All"/>
-                            <ComboBoxItem Content="High"       Tag="High"/>
-                            <ComboBoxItem Content="Medium"     Tag="Medium"/>
-                            <ComboBoxItem Content="Low"        Tag="Low"/>
+                        <ComboBox Width="120" Margin="8,0,0,0" SelectedValuePath="Tag" SelectedValue="{Binding ImpactFilter}"
+                                  ToolTip="Filter by estimated impact.">
+                            <ComboBoxItem Content="All impact" Tag="{x:Static m:StartupImpactFilter.All}"/>
+                            <ComboBoxItem Content="High"       Tag="{x:Static m:StartupImpactFilter.High}"/>
+                            <ComboBoxItem Content="Medium"     Tag="{x:Static m:StartupImpactFilter.Medium}"/>
+                            <ComboBoxItem Content="Low"        Tag="{x:Static m:StartupImpactFilter.Low}"/>
                         </ComboBox>
                         <CheckBox Content="Microsoft" Margin="14,0,0,0" IsChecked="{Binding ShowMicrosoft}"/>
                     </StackPanel>
@@ -100,150 +126,270 @@
             </Border>
         </Grid>
 
-        <!-- Body: split items / sidebar tabs -->
-        <Grid Grid.Row="2">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="380"/>
-            </Grid.ColumnDefinitions>
+        <TabControl Grid.Row="2" Padding="0">
+            <TabItem Header="Startup entries">
+                <Grid Margin="0,12,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="380"/>
+                    </Grid.ColumnDefinitions>
 
-            <Border Grid.Column="0" Style="{StaticResource Card}" Padding="0">
-                <DataGrid x:Name="ItemsGrid"
-                          ItemsSource="{Binding ItemsView}"
-                          SelectedItem="{Binding SelectedItem}"
-                          SelectionMode="Extended"
-                          IsReadOnly="True">
-                    <DataGrid.ContextMenu>
-                        <ContextMenu>
-                            <MenuItem Header="Toggle"             Click="ToggleMenu_Click"/>
-                            <MenuItem Header="Open file location" Click="OpenLocationMenu_Click"/>
-                            <MenuItem Header="Copy command line"  Click="CopyMenu_Click"/>
-                            <MenuItem Header="Edit note…"         Click="NoteMenu_Click"/>
-                            <MenuItem Header="Pin to top"         Click="PinMenu_Click"/>
-                        </ContextMenu>
-                    </DataGrid.ContextMenu>
-                    <DataGrid.Columns>
-                        <DataGridTemplateColumn Header="" Width="36">
-                            <DataGridTemplateColumn.CellTemplate>
-                                <DataTemplate>
-                                    <Image Source="{Binding Icon}" Width="16" Height="16" Margin="10,0,0,0"/>
-                                </DataTemplate>
-                            </DataGridTemplateColumn.CellTemplate>
-                        </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="" Width="40">
-                            <DataGridTemplateColumn.CellTemplate>
-                                <DataTemplate>
-                                    <CheckBox Style="{StaticResource ToggleSwitch}"
-                                              IsChecked="{Binding Enabled, Mode=OneWay}"
-                                              Click="EnableToggle_Click"/>
-                                </DataTemplate>
-                            </DataGridTemplateColumn.CellTemplate>
-                        </DataGridTemplateColumn>
-                        <DataGridTextColumn Header="Name"      Binding="{Binding Name}"        Width="*"/>
-                        <DataGridTextColumn Header="Publisher" Binding="{Binding Publisher}"   Width="160"/>
-                        <DataGridTextColumn Header="Source"    Binding="{Binding SourceLabel}" Width="120"/>
-                        <DataGridTextColumn Header="Scope"     Binding="{Binding Scope}"       Width="130"/>
-                        <DataGridTemplateColumn Header="Impact" Width="90">
-                            <DataGridTemplateColumn.CellTemplate>
-                                <DataTemplate>
-                                    <Border Style="{StaticResource Pill}">
-                                        <TextBlock Text="{Binding ImpactLabel}"/>
-                                    </Border>
-                                </DataTemplate>
-                            </DataGridTemplateColumn.CellTemplate>
-                        </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="" Width="80">
-                            <DataGridTemplateColumn.CellTemplate>
-                                <DataTemplate>
-                                    <StackPanel Orientation="Horizontal">
-                                        <Border Style="{StaticResource Pill}"
-                                                Background="{DynamicResource AccentSoftBrush}"
-                                                Visibility="{Binding IsPinned, Converter={StaticResource BoolToVis}}">
-                                            <TextBlock Text="Pinned" Foreground="{DynamicResource AccentBrush}" FontSize="11"/>
-                                        </Border>
-                                        <Border Style="{StaticResource Pill}" Margin="6,0,0,0"
-                                                Background="{DynamicResource SurfaceActiveBrush}"
-                                                Visibility="{Binding IsOrphaned, Converter={StaticResource BoolToVis}}">
-                                            <TextBlock Text="Orphan" Foreground="{DynamicResource WarningBrush}" FontSize="11"/>
-                                        </Border>
+                    <Border Grid.Column="0" Style="{StaticResource Card}" Padding="0">
+                        <DataGrid x:Name="ItemsGrid"
+                                  ItemsSource="{Binding ItemsView}"
+                                  SelectedItem="{Binding SelectedItem}"
+                                  SelectionMode="Extended"
+                                  IsReadOnly="True"
+                                  PreviewMouseRightButtonDown="DataGrid_PreviewMouseRightButtonDown">
+                            <DataGrid.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Header="Toggle"             Click="ToggleMenu_Click"/>
+                                    <MenuItem Header="Open file location" Click="OpenLocationMenu_Click"/>
+                                    <MenuItem Header="Copy command line"  Click="CopyMenu_Click"/>
+                                    <MenuItem Header="Edit note…"         Click="NoteMenu_Click"/>
+                                    <MenuItem Header="Pin to top"         Click="PinMenu_Click"/>
+                                </ContextMenu>
+                            </DataGrid.ContextMenu>
+                            <DataGrid.Columns>
+                                <DataGridTemplateColumn Header="" Width="Auto" MinWidth="58">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <CheckBox Style="{StaticResource ToggleSwitch}"
+                                                      IsChecked="{Binding Enabled, Mode=OneWay}"
+                                                      Click="EnableToggle_Click"/>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTextColumn Header="Status"    Binding="{Binding StatusLabel}"   Width="90"/>
+                                <DataGridTemplateColumn Header="" Width="Auto" MinWidth="44">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <Image Source="{Binding Icon}" Width="16" Height="16" Margin="10,0,0,0"/>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTextColumn Header="Name"      Binding="{Binding Name}"          Width="*"/>
+                                <DataGridTextColumn Header="Publisher" Binding="{Binding Publisher}"     Width="160"/>
+                                <DataGridTextColumn Header="Source"    Binding="{Binding SourceLabel}"   Width="120"/>
+                                <DataGridTextColumn Header="Scope"     Binding="{Binding Scope}"         Width="130"/>
+                                <DataGridTemplateColumn Header="Impact" Width="90">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <Border Style="{StaticResource Pill}"
+                                                    Background="{Binding Impact, Converter={StaticResource ImpactToSoftBrush}}">
+                                                <TextBlock Text="{Binding ImpactLabel}"
+                                                           Foreground="{Binding Impact, Converter={StaticResource ImpactToBrush}}"
+                                                           FontWeight="SemiBold"/>
+                                            </Border>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTemplateColumn Header="" Width="80">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Orientation="Horizontal">
+                                                <Border Style="{StaticResource Pill}"
+                                                        Background="{DynamicResource AccentSoftBrush}"
+                                                        Visibility="{Binding IsPinned, Converter={StaticResource BoolToVis}}">
+                                                    <TextBlock Text="Pinned" Foreground="{DynamicResource AccentBrush}" FontSize="11"/>
+                                                </Border>
+                                                <Border Style="{StaticResource Pill}" Margin="6,0,0,0"
+                                                        Background="{DynamicResource SurfaceActiveBrush}"
+                                                        Visibility="{Binding IsOrphaned, Converter={StaticResource BoolToVis}}">
+                                                    <TextBlock Text="Orphan" Foreground="{DynamicResource WarningBrush}" FontSize="11"/>
+                                                </Border>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </Border>
+
+                    <Border Grid.Column="1" Margin="16,0,0,0">
+                        <TabControl>
+                            <TabItem Header="Details">
+                                <Grid Margin="0,12,0,0">
+                                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                Visibility="{Binding SelectedItem, Converter={StaticResource NullToVis}, ConverterParameter=invert}">
+                                        <TextBlock Text="No item selected" Style="{StaticResource TextSubtitle}"
+                                                   HorizontalAlignment="Center"
+                                                   Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                        <TextBlock Text="Pick a row in the table to see details."
+                                                   Style="{StaticResource TextCaption}"
+                                                   HorizontalAlignment="Center" Margin="0,6,0,0"/>
                                     </StackPanel>
-                                </DataTemplate>
-                            </DataGridTemplateColumn.CellTemplate>
-                        </DataGridTemplateColumn>
-                    </DataGrid.Columns>
-                </DataGrid>
-            </Border>
 
-            <!-- Side panel -->
-            <Border Grid.Column="1" Margin="16,0,0,0">
-                <TabControl>
-                    <TabItem Header="Details">
-                        <ScrollViewer VerticalScrollBarVisibility="Auto">
-                            <StackPanel Margin="0,12,0,0" DataContext="{Binding SelectedItem}">
-                                <TextBlock Text="{Binding Name, FallbackValue='Select an item'}" Style="{StaticResource TextSubtitle}"/>
-                                <TextBlock Text="{Binding Publisher}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12"/>
-                                <Border Background="{DynamicResource DividerBrush}" Height="1" Margin="0,10"/>
-                                <StackPanel>
+                                    <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                                  Visibility="{Binding SelectedItem, Converter={StaticResource NullToVis}}">
+                                        <StackPanel DataContext="{Binding SelectedItem}">
+                                            <TextBlock Text="{Binding Name}" Style="{StaticResource TextSubtitle}"/>
+                                            <TextBlock Text="{Binding StatusLabel}" Foreground="{DynamicResource AccentBrush}" FontSize="12"/>
+                                            <TextBlock Text="{Binding Publisher}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12"/>
+                                            <Border Background="{DynamicResource DividerBrush}" Height="1" Margin="0,10"/>
+                                            <StackPanel>
+                                                <TextBlock Text="Command line" Style="{StaticResource TextCaption}"/>
+                                                <TextBlock Text="{Binding CommandLine}" TextWrapping="Wrap" FontFamily="Consolas" FontSize="12"/>
+                                                <TextBlock Text="Target" Style="{StaticResource TextCaption}" Margin="0,10,0,0"/>
+                                                <TextBlock Text="{Binding TargetPath}" TextWrapping="Wrap" FontFamily="Consolas" FontSize="12"/>
+                                                <TextBlock Text="Description" Style="{StaticResource TextCaption}" Margin="0,10,0,0"/>
+                                                <TextBlock Text="{Binding Description}" TextWrapping="Wrap"/>
+                                                <TextBlock Text="Scope" Style="{StaticResource TextCaption}" Margin="0,10,0,0"/>
+                                                <TextBlock Text="{Binding Scope}"/>
+                                            </StackPanel>
+                                            <Border Background="{DynamicResource DividerBrush}" Height="1" Margin="0,12"/>
+                                            <StackPanel Orientation="Horizontal">
+                                                <Button Content="Open location" Click="OpenLocationMenu_Click"
+                                                        ToolTip="Show the target file in Explorer."/>
+                                                <Button Content="Copy command"  Margin="6,0,0,0" Click="CopyMenu_Click"
+                                                        ToolTip="Copy the command line to the clipboard."/>
+                                            </StackPanel>
+                                        </StackPanel>
+                                    </ScrollViewer>
+                                </Grid>
+                            </TabItem>
+
+                            <TabItem Header="History">
+                                <Grid Margin="0,12,0,0">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="*"/>
+                                    </Grid.RowDefinitions>
+                                    <TextBox Grid.Row="0" Text="{Binding HistorySearchText, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,8"/>
+                                    <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,8">
+                                        <Button Content="Undo last" Style="{StaticResource PrimaryButton}" Command="{Binding UndoLastCommand}"/>
+                                        <Button Content="Export CSV" Margin="6,0,0,0" Command="{Binding ExportHistoryCsvCommand}"/>
+                                    </StackPanel>
+                                    <DataGrid Grid.Row="2" ItemsSource="{Binding HistoryView}" IsReadOnly="True">
+                                        <DataGrid.Columns>
+                                            <DataGridTextColumn Header="When"  Binding="{Binding TimestampDisplay}" Width="150"/>
+                                            <DataGridTextColumn Header="Item"  Binding="{Binding ItemName}"        Width="*"/>
+                                            <DataGridTextColumn Header="Source" Binding="{Binding Source}"          Width="100"/>
+                                            <DataGridTextColumn Header="Action" Binding="{Binding Action}"          Width="140"/>
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+                                </Grid>
+                            </TabItem>
+
+                            <TabItem Header="Bulk">
+                                <StackPanel Margin="0,12,0,0">
+                                    <TextBlock Style="{StaticResource TextSubtitle}" Text="Bulk actions"/>
+                                    <TextBlock Style="{StaticResource TextCaption}" Margin="0,4,0,0"
+                                               Text="Select rows in the table, then apply."/>
+                                    <Button Content="Enable selected"  Margin="0,12,0,0" Click="BulkEnable_Click"/>
+                                    <Button Content="Disable selected" Style="{StaticResource DangerButton}" Margin="0,8,0,0" Click="BulkDisable_Click"/>
+                                    <Border Background="{DynamicResource DividerBrush}" Height="1" Margin="0,16"/>
+                                    <CheckBox Content="Confirm before disable" IsChecked="{Binding ConfirmBeforeDisable}"/>
+                                    <TextBlock Text="History retention" Style="{StaticResource TextCaption}" Margin="0,12,0,4"/>
+                                    <ComboBox SelectedValuePath="Tag" SelectedValue="{Binding Retention}">
+                                        <ComboBoxItem Content="Keep all"      Tag="{x:Static m:HistoryRetention.KeepAll}"/>
+                                        <ComboBoxItem Content="Last 100"      Tag="{x:Static m:HistoryRetention.Last100}"/>
+                                        <ComboBoxItem Content="Last 30 days"  Tag="{x:Static m:HistoryRetention.Last30Days}"/>
+                                    </ComboBox>
+                                </StackPanel>
+                            </TabItem>
+                        </TabControl>
+                    </Border>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="Services">
+                <Grid Margin="0,12,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="380"/>
+                    </Grid.ColumnDefinitions>
+
+                    <Border Grid.Column="0" Style="{StaticResource Card}" Padding="0">
+                        <DataGrid x:Name="ServicesGrid"
+                                  ItemsSource="{Binding ServicesView}"
+                                  SelectedItem="{Binding SelectedService}"
+                                  SelectionMode="Single"
+                                  IsReadOnly="True"
+                                  PreviewMouseRightButtonDown="DataGrid_PreviewMouseRightButtonDown">
+                            <DataGrid.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Header="Set Automatic" Click="ServiceAutomaticMenu_Click"/>
+                                    <MenuItem Header="Set Manual"    Click="ServiceManualMenu_Click"/>
+                                    <MenuItem Header="Set Disabled"  Click="ServiceDisabledMenu_Click"/>
+                                    <Separator/>
+                                    <MenuItem Header="Open file location" Click="ServiceOpenLocationMenu_Click"/>
+                                    <MenuItem Header="Copy command line"  Click="ServiceCopyMenu_Click"/>
+                                    <MenuItem Header="Edit note…"         Click="ServiceNoteMenu_Click"/>
+                                    <MenuItem Header="Pin to top"         Click="ServicePinMenu_Click"/>
+                                </ContextMenu>
+                            </DataGrid.ContextMenu>
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Startup type" Binding="{Binding StartupTypeLabel}" Width="120"/>
+                                <DataGridTemplateColumn Header="" Width="Auto" MinWidth="44">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <Image Source="{Binding Icon}" Width="16" Height="16" Margin="10,0,0,0"/>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTextColumn Header="Name"         Binding="{Binding Name}"             Width="*"/>
+                                <DataGridTextColumn Header="Service name" Binding="{Binding Locator}"          Width="160"/>
+                                <DataGridTextColumn Header="Publisher"    Binding="{Binding Publisher}"        Width="160"/>
+                                <DataGridTextColumn Header="Target"       Binding="{Binding TargetPath}"       Width="220"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </Border>
+
+                    <Border Grid.Column="1" Margin="16,0,0,0">
+                        <Grid Margin="0,12,0,0">
+                            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
+                                        Visibility="{Binding SelectedService, Converter={StaticResource NullToVis}, ConverterParameter=invert}">
+                                <TextBlock Text="No service selected" Style="{StaticResource TextSubtitle}"
+                                           HorizontalAlignment="Center"
+                                           Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                <TextBlock Text="Pick a service to view or change its startup type."
+                                           Style="{StaticResource TextCaption}"
+                                           HorizontalAlignment="Center" Margin="0,6,0,0"/>
+                            </StackPanel>
+
+                            <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                          Visibility="{Binding SelectedService, Converter={StaticResource NullToVis}}">
+                                <StackPanel DataContext="{Binding SelectedService}">
+                                    <TextBlock Text="{Binding Name}" Style="{StaticResource TextSubtitle}"/>
+                                    <TextBlock Text="{Binding StartupTypeLabel}" Foreground="{DynamicResource AccentBrush}" FontWeight="SemiBold"/>
+                                    <TextBlock Text="{Binding Locator}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12"/>
+                                    <Border Background="{DynamicResource DividerBrush}" Height="1" Margin="0,12"/>
+
+                                    <TextBlock Text="Startup type" Style="{StaticResource TextCaption}"/>
+                                    <UniformGrid Columns="3" Margin="0,8,0,0">
+                                        <Button Content="Automatic"
+                                                Margin="0,0,6,0"
+                                                Command="{Binding DataContext.SetSelectedServiceAutomaticCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"/>
+                                        <Button Content="Manual"
+                                                Margin="3,0,3,0"
+                                                Command="{Binding DataContext.SetSelectedServiceManualCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"/>
+                                        <Button Content="Disabled"
+                                                Margin="6,0,0,0"
+                                                Style="{StaticResource DangerButton}"
+                                                Command="{Binding DataContext.SetSelectedServiceDisabledCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"/>
+                                    </UniformGrid>
+
+                                    <Border Background="{DynamicResource DividerBrush}" Height="1" Margin="0,14"/>
                                     <TextBlock Text="Command line" Style="{StaticResource TextCaption}"/>
                                     <TextBlock Text="{Binding CommandLine}" TextWrapping="Wrap" FontFamily="Consolas" FontSize="12"/>
-                                    <TextBlock Text="Target" Style="{StaticResource TextCaption}" Margin="0,10,0,0"/>
-                                    <TextBlock Text="{Binding TargetPath}" TextWrapping="Wrap" FontFamily="Consolas" FontSize="12"/>
                                     <TextBlock Text="Description" Style="{StaticResource TextCaption}" Margin="0,10,0,0"/>
                                     <TextBlock Text="{Binding Description}" TextWrapping="Wrap"/>
-                                    <TextBlock Text="Scope" Style="{StaticResource TextCaption}" Margin="0,10,0,0"/>
-                                    <TextBlock Text="{Binding Scope}"/>
-                                </StackPanel>
-                                <Border Background="{DynamicResource DividerBrush}" Height="1" Margin="0,12"/>
-                                <StackPanel Orientation="Horizontal">
-                                    <Button Content="Open location" Click="OpenLocationMenu_Click"/>
-                                    <Button Content="Copy command"  Margin="6,0,0,0" Click="CopyMenu_Click"/>
-                                </StackPanel>
-                            </StackPanel>
-                        </ScrollViewer>
-                    </TabItem>
+                                    <TextBlock Text="Publisher" Style="{StaticResource TextCaption}" Margin="0,10,0,0"/>
+                                    <TextBlock Text="{Binding Publisher}" TextWrapping="Wrap"/>
 
-                    <TabItem Header="History">
-                        <Grid Margin="0,12,0,0">
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="*"/>
-                            </Grid.RowDefinitions>
-                            <TextBox Grid.Row="0" Text="{Binding HistorySearchText, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,8"/>
-                            <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,8">
-                                <Button Content="Undo last" Style="{StaticResource PrimaryButton}" Command="{Binding UndoLastCommand}"/>
-                                <Button Content="Export CSV" Margin="6,0,0,0" Command="{Binding ExportHistoryCsvCommand}"/>
-                            </StackPanel>
-                            <DataGrid Grid.Row="2" ItemsSource="{Binding HistoryView}" IsReadOnly="True">
-                                <DataGrid.Columns>
-                                    <DataGridTextColumn Header="When"  Binding="{Binding TimestampDisplay}" Width="150"/>
-                                    <DataGridTextColumn Header="Item"  Binding="{Binding ItemName}"        Width="*"/>
-                                    <DataGridTextColumn Header="Source" Binding="{Binding Source}"          Width="100"/>
-                                    <DataGridTextColumn Header="Action" Binding="{Binding Action}"          Width="80"/>
-                                </DataGrid.Columns>
-                            </DataGrid>
+                                    <Border Background="{DynamicResource DividerBrush}" Height="1" Margin="0,12"/>
+                                    <StackPanel Orientation="Horizontal">
+                                        <Button Content="Open location" Click="ServiceOpenLocationMenu_Click"/>
+                                        <Button Content="Copy command"  Margin="6,0,0,0" Click="ServiceCopyMenu_Click"/>
+                                    </StackPanel>
+                                </StackPanel>
+                            </ScrollViewer>
                         </Grid>
-                    </TabItem>
-
-                    <TabItem Header="Bulk">
-                        <StackPanel Margin="0,12,0,0">
-                            <TextBlock Style="{StaticResource TextSubtitle}" Text="Bulk actions"/>
-                            <TextBlock Style="{StaticResource TextCaption}" Margin="0,4,0,0"
-                                       Text="Select rows in the table, then apply."/>
-                            <Button Content="Enable selected"  Margin="0,12,0,0" Click="BulkEnable_Click"/>
-                            <Button Content="Disable selected" Style="{StaticResource DangerButton}" Margin="0,8,0,0" Click="BulkDisable_Click"/>
-                            <Border Background="{DynamicResource DividerBrush}" Height="1" Margin="0,16"/>
-                            <CheckBox Content="Confirm before disable" IsChecked="{Binding ConfirmBeforeDisable}"/>
-                            <TextBlock Text="History retention" Style="{StaticResource TextCaption}" Margin="0,12,0,4"/>
-                            <ComboBox SelectedValuePath="Tag" SelectedValue="{Binding Retention}">
-                                <ComboBoxItem Content="Keep all"      Tag="KeepAll"/>
-                                <ComboBoxItem Content="Last 100"      Tag="Last100"/>
-                                <ComboBoxItem Content="Last 30 days"  Tag="Last30Days"/>
-                            </ComboBox>
-                        </StackPanel>
-                    </TabItem>
-                </TabControl>
-            </Border>
-        </Grid>
+                    </Border>
+                </Grid>
+            </TabItem>
+        </TabControl>
     </Grid>
 </UserControl>

@@ -110,7 +110,8 @@ public sealed partial class WindowSizerViewModel : ObservableObject
         Settings.LayoutPresets = LayoutPresets.ToList();
         Settings.Hotkeys = Hotkeys.ToList();
         Settings.AutoRefreshSeconds = AutoRefreshSeconds;
-        await _storage.SaveAsync(_settingsPath, Settings);
+        if (!await _storage.SaveAsync(_settingsPath, Settings))
+            _status.Set("WindowSizer settings could not be saved.", StatusKind.Warning);
     }
 
     partial void OnSelectedWindowChanged(WindowInfo? value)
@@ -145,12 +146,7 @@ public sealed partial class WindowSizerViewModel : ObservableObject
     {
         try
         {
-            IntPtr self = IntPtr.Zero;
-            if (App.Instance.Shell is { } shell)
-            {
-                var helper = new System.Windows.Interop.WindowInteropHelper(shell);
-                self = helper.Handle;
-            }
+            var self = GetShellHwnd();
             var current = _windows.EnumerateWindows(self);
 
             // Diff in-place so the DataGrid selection doesn't blink.
@@ -260,7 +256,7 @@ public sealed partial class WindowSizerViewModel : ObservableObject
     }
 
     [RelayCommand]
-    private async Task ApplyLayoutAsync(LayoutPreset? preset)
+    private void ApplyLayout(LayoutPreset? preset)
     {
         preset ??= SelectedLayoutPreset;
         if (preset is null) { _status.Set("Pick a layout.", StatusKind.Warning); return; }
@@ -271,7 +267,6 @@ public sealed partial class WindowSizerViewModel : ObservableObject
         _recent.Add("WindowSizer", $"Layout: {preset.Name} → {target.Title}");
         _status.Set($"Applied layout {preset.Name}.", StatusKind.Success);
         Refresh();
-        await Task.CompletedTask;
     }
 
     [RelayCommand]
@@ -302,6 +297,17 @@ public sealed partial class WindowSizerViewModel : ObservableObject
         Hotkeys.Add(binding);
         await SaveAsync();
         RefreshHotkeyRegistrations();
+    }
+
+    /// <summary>Flip Enabled, persist, and rewire registrations so the OS-level hotkey actually goes away.</summary>
+    public async Task SetHotkeyEnabledAsync(HotkeyBinding binding, bool enabled)
+    {
+        if (binding is null || binding.Enabled == enabled) return;
+        binding.Enabled = enabled;
+        await SaveAsync();
+        RefreshHotkeyRegistrations();
+        _status.Set(enabled ? $"Hotkey enabled: {binding.ActionLabel}" : $"Hotkey disabled: {binding.ActionLabel}",
+                    StatusKind.Info);
     }
 
     public bool HasConflict(HotkeyBinding candidate) =>
@@ -337,6 +343,7 @@ public sealed partial class WindowSizerViewModel : ObservableObject
             // Hotkeys act on the current foreground window, not the WindowSizer selection.
             var fg = GetForegroundWindowSafe();
             if (fg == IntPtr.Zero) return;
+            if (!_windows.CanManageWindow(fg, GetShellHwnd())) return;
             switch (b.Action)
             {
                 case HotkeyAction.SnapLeft:   _windows.Snap(fg, WindowService.SnapEdge.Left);   break;
@@ -360,6 +367,20 @@ public sealed partial class WindowSizerViewModel : ObservableObject
         try { return Win32GetForegroundWindow(); } catch { return IntPtr.Zero; }
     }
 
+    private static IntPtr GetShellHwnd()
+    {
+        try
+        {
+            return App.Instance.Shell is { } shell
+                ? new System.Windows.Interop.WindowInteropHelper(shell).Handle
+                : IntPtr.Zero;
+        }
+        catch
+        {
+            return IntPtr.Zero;
+        }
+    }
+
     [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "GetForegroundWindow")]
     private static extern IntPtr Win32GetForegroundWindow();
 
@@ -368,6 +389,11 @@ public sealed partial class WindowSizerViewModel : ObservableObject
     {
         var fg = GetForegroundWindowSafe();
         if (fg == IntPtr.Zero) { _status.Set("No foreground window to snap.", StatusKind.Warning); return; }
+        if (!_windows.CanManageWindow(fg, GetShellHwnd()))
+        {
+            _status.Set("Foreground window cannot be managed safely.", StatusKind.Warning);
+            return;
+        }
         _windows.Snap(fg, left ? WindowService.SnapEdge.Left : WindowService.SnapEdge.Right);
         _recent.Add("WindowSizer", $"Tray snap {(left ? "left" : "right")}: foreground window");
         _status.Set("Foreground window snapped.", StatusKind.Success);

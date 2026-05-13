@@ -54,14 +54,14 @@ public enum HotkeyAction
     ApplyLayoutPreset,
 }
 
-public sealed class HotkeyBinding
+public sealed partial class HotkeyBinding : ObservableObject
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
     public HotkeyAction Action { get; set; }
     public string? LayoutPresetName { get; set; }
     public uint Modifiers { get; set; } // MOD_ALT|MOD_CONTROL|etc
     public uint VirtualKey { get; set; }
-    public bool Enabled { get; set; } = true;
+    [ObservableProperty] private bool _enabled = true;
 
     public string DisplayText
     {

@@ -15,10 +15,6 @@ using PowerDesk.Core.Services;
 using PowerDesk.Core.Storage;
 using PowerDesk.Modules.StartupPilot.Models;
 using PowerDesk.Modules.StartupPilot.Services;
-using MessageBox = System.Windows.MessageBox;
-using MessageBoxButton = System.Windows.MessageBoxButton;
-using MessageBoxImage = System.Windows.MessageBoxImage;
-using MessageBoxResult = System.Windows.MessageBoxResult;
 using Clipboard = System.Windows.Clipboard;
 
 namespace PowerDesk.Modules.StartupPilot.ViewModels;
@@ -31,13 +27,16 @@ public sealed partial class StartupPilotViewModel : ObservableObject
     private readonly RecentActionsService _recent;
     private readonly IconService _icons;
     private readonly PermissionService _permissions;
+    private readonly IConfirmationService _confirm;
     private readonly StartupScanner _scanner;
     private readonly StartupController _controller;
     private readonly string _settingsPath;
+    private bool _initializing;
 
     public ObservableCollection<StartupItem> Items { get; } = new();
     public ObservableCollection<StartupHistoryEntry> History { get; } = new();
     public ICollectionView ItemsView { get; }
+    public ICollectionView ServicesView { get; }
     public ICollectionView HistoryView { get; }
 
     public StartupPilotSettings Settings { get; private set; } = new();
@@ -55,15 +54,21 @@ public sealed partial class StartupPilotViewModel : ObservableObject
     [ObservableProperty] private bool _isScanning;
     [ObservableProperty] private string _historySearchText = string.Empty;
     [ObservableProperty] private StartupItem? _selectedItem;
+    [ObservableProperty] private StartupItem? _selectedService;
     [ObservableProperty] private HistoryRetention _retention = HistoryRetention.Last100;
 
     public int TotalCount     => Items.Count;
-    public int EnabledCount   => Items.Count(i => i.Enabled);
-    public int DisabledCount  => Items.Count(i => !i.Enabled);
-    public int OrphanCount    => Items.Count(i => i.IsOrphaned);
-    public int HighImpactCount   => Items.Count(i => i.Enabled && i.Impact == StartupImpact.High);
-    public int MediumImpactCount => Items.Count(i => i.Enabled && i.Impact == StartupImpact.Medium);
-    public int LowImpactCount    => Items.Count(i => i.Enabled && i.Impact == StartupImpact.Low);
+    public int StartupEntryCount => Items.Count(IsStartupEntry);
+    public int EnabledCount   => Items.Count(i => IsStartupEntry(i) && i.Enabled);
+    public int DisabledCount  => Items.Count(i => IsStartupEntry(i) && !i.Enabled);
+    public int OrphanCount    => Items.Count(i => IsStartupEntry(i) && i.IsOrphaned);
+    public int HighImpactCount   => Items.Count(i => IsStartupEntry(i) && i.Enabled && i.Impact == StartupImpact.High);
+    public int MediumImpactCount => Items.Count(i => IsStartupEntry(i) && i.Enabled && i.Impact == StartupImpact.Medium);
+    public int LowImpactCount    => Items.Count(i => IsStartupEntry(i) && i.Enabled && i.Impact == StartupImpact.Low);
+    public int ServiceCount => Items.Count(i => i.Source == StartupSource.Service);
+    public int AutomaticServiceCount => Items.Count(i => i.Source == StartupSource.Service && i.ServiceStartupType == ServiceStartupType.Automatic);
+    public int ManualServiceCount => Items.Count(i => i.Source == StartupSource.Service && i.ServiceStartupType == ServiceStartupType.Manual);
+    public int DisabledServiceCount => Items.Count(i => i.Source == StartupSource.Service && i.ServiceStartupType == ServiceStartupType.Disabled);
 
     public bool IsAdmin => _permissions.IsAdministrator;
 
@@ -73,7 +78,8 @@ public sealed partial class StartupPilotViewModel : ObservableObject
         StatusService status,
         RecentActionsService recent,
         IconService icons,
-        PermissionService permissions)
+        PermissionService permissions,
+        IConfirmationService confirm)
     {
         _log = log;
         _storage = storage;
@@ -81,14 +87,20 @@ public sealed partial class StartupPilotViewModel : ObservableObject
         _recent = recent;
         _icons = icons;
         _permissions = permissions;
+        _confirm = confirm;
         _scanner = new StartupScanner(log, icons);
         _controller = new StartupController(log);
         _settingsPath = PathService.ModuleSettingsFile("StartupPilot");
 
-        ItemsView = CollectionViewSource.GetDefaultView(Items);
+        ItemsView = new CollectionViewSource { Source = Items }.View;
         ItemsView.Filter = ItemFilter;
         ItemsView.SortDescriptions.Add(new SortDescription(nameof(StartupItem.IsPinned), ListSortDirection.Descending));
         ItemsView.SortDescriptions.Add(new SortDescription(nameof(StartupItem.Name), ListSortDirection.Ascending));
+
+        ServicesView = new CollectionViewSource { Source = Items }.View;
+        ServicesView.Filter = ServiceFilter;
+        ServicesView.SortDescriptions.Add(new SortDescription(nameof(StartupItem.IsPinned), ListSortDirection.Descending));
+        ServicesView.SortDescriptions.Add(new SortDescription(nameof(StartupItem.Name), ListSortDirection.Ascending));
 
         HistoryView = CollectionViewSource.GetDefaultView(History);
         HistoryView.Filter = HistoryFilter;
@@ -97,13 +109,21 @@ public sealed partial class StartupPilotViewModel : ObservableObject
 
     public async Task InitializeAsync()
     {
-        Settings = await _storage.LoadAsync(_settingsPath, () => new StartupPilotSettings());
-        ShowMicrosoft = Settings.ShowMicrosoftItems;
-        ConfirmBeforeDisable = Settings.ConfirmBeforeDisable;
-        LastScan = Settings.LastScan;
-        Retention = Settings.Retention;
-        History.Clear();
-        foreach (var h in Settings.History) History.Add(h);
+        _initializing = true;
+        try
+        {
+            Settings = await _storage.LoadAsync(_settingsPath, () => new StartupPilotSettings());
+            ShowMicrosoft = Settings.ShowMicrosoftItems;
+            ConfirmBeforeDisable = Settings.ConfirmBeforeDisable;
+            LastScan = Settings.LastScan;
+            Retention = Settings.Retention;
+            History.Clear();
+            foreach (var h in Settings.History) History.Add(h);
+        }
+        finally
+        {
+            _initializing = false;
+        }
 
         if (Settings.AutoScanOnLaunch) await RescanAsync();
     }
@@ -118,7 +138,8 @@ public sealed partial class StartupPilotViewModel : ObservableObject
         Settings.Retention = Retention;
         ApplyRetention();
         Settings.History = History.ToList();
-        await _storage.SaveAsync(_settingsPath, Settings);
+        if (!await _storage.SaveAsync(_settingsPath, Settings))
+            _status.Set("StartupPilot settings could not be saved.", StatusKind.Warning);
     }
 
     private void ApplyRetention()
@@ -136,7 +157,11 @@ public sealed partial class StartupPilotViewModel : ObservableObject
         }
     }
 
-    partial void OnSearchTextChanged(string value) => ItemsView.Refresh();
+    partial void OnSearchTextChanged(string value)
+    {
+        ItemsView.Refresh();
+        ServicesView.Refresh();
+    }
     partial void OnStatusFilterChanged(StartupStatusFilter value) => ItemsView.Refresh();
     partial void OnImpactFilterChanged(StartupImpactFilter value) => ItemsView.Refresh();
     partial void OnFilterRegistryChanged(bool value) => ItemsView.Refresh();
@@ -145,6 +170,7 @@ public sealed partial class StartupPilotViewModel : ObservableObject
     partial void OnFilterServiceChanged(bool value) => ItemsView.Refresh();
     partial void OnShowMicrosoftChanged(bool value)
     {
+        if (_initializing) return;
         // re-scan to actually include/exclude Microsoft items, since the scanner filters at the source.
         _ = RescanAsync();
     }
@@ -153,12 +179,12 @@ public sealed partial class StartupPilotViewModel : ObservableObject
     private bool ItemFilter(object obj)
     {
         if (obj is not StartupItem i) return false;
+        if (!IsStartupEntry(i)) return false;
         switch (i.Source)
         {
             case StartupSource.Registry      when !FilterRegistry: return false;
             case StartupSource.StartupFolder when !FilterStartupFolder: return false;
             case StartupSource.TaskScheduler when !FilterTaskScheduler: return false;
-            case StartupSource.Service       when !FilterService: return false;
         }
         if (StatusFilter == StartupStatusFilter.Enabled  && !i.Enabled) return false;
         if (StatusFilter == StartupStatusFilter.Disabled &&  i.Enabled) return false;
@@ -171,6 +197,21 @@ public sealed partial class StartupPilotViewModel : ObservableObject
             if (i.Name.IndexOf(q, StringComparison.OrdinalIgnoreCase) < 0 &&
                 i.Publisher.IndexOf(q, StringComparison.OrdinalIgnoreCase) < 0 &&
                 i.CommandLine.IndexOf(q, StringComparison.OrdinalIgnoreCase) < 0)
+                return false;
+        }
+        return true;
+    }
+
+    private bool ServiceFilter(object obj)
+    {
+        if (obj is not StartupItem i || i.Source != StartupSource.Service) return false;
+        if (!string.IsNullOrWhiteSpace(SearchText))
+        {
+            var q = SearchText.Trim();
+            if (i.Name.IndexOf(q, StringComparison.OrdinalIgnoreCase) < 0 &&
+                i.Publisher.IndexOf(q, StringComparison.OrdinalIgnoreCase) < 0 &&
+                i.CommandLine.IndexOf(q, StringComparison.OrdinalIgnoreCase) < 0 &&
+                i.Locator.IndexOf(q, StringComparison.OrdinalIgnoreCase) < 0)
                 return false;
         }
         return true;
@@ -201,10 +242,13 @@ public sealed partial class StartupPilotViewModel : ObservableObject
                 if (Settings.Notes.TryGetValue(key, out var note)) i.Note = note;
                 i.IsPinned = Settings.Pinned.Contains(key);
             }
-            Items.Clear();
-            foreach (var i in list) Items.Add(i);
-            LastScan = DateTime.Now;
-            RaiseCounts();
+            UiDispatcher.Invoke(() =>
+            {
+                Items.Clear();
+                foreach (var i in list) Items.Add(i);
+                LastScan = DateTime.Now;
+                RaiseCounts();
+            });
             _status.Set($"Scan complete: {Items.Count} items.", StatusKind.Success);
             _recent.Add("StartupPilot", $"Scanned {Items.Count} startup items.");
             await SaveAsync();
@@ -220,13 +264,20 @@ public sealed partial class StartupPilotViewModel : ObservableObject
     private void RaiseCounts()
     {
         OnPropertyChanged(nameof(TotalCount));
+        OnPropertyChanged(nameof(StartupEntryCount));
         OnPropertyChanged(nameof(EnabledCount));
         OnPropertyChanged(nameof(DisabledCount));
         OnPropertyChanged(nameof(OrphanCount));
         OnPropertyChanged(nameof(HighImpactCount));
         OnPropertyChanged(nameof(MediumImpactCount));
         OnPropertyChanged(nameof(LowImpactCount));
+        OnPropertyChanged(nameof(ServiceCount));
+        OnPropertyChanged(nameof(AutomaticServiceCount));
+        OnPropertyChanged(nameof(ManualServiceCount));
+        OnPropertyChanged(nameof(DisabledServiceCount));
     }
+
+    private static bool IsStartupEntry(StartupItem item) => item.Source != StartupSource.Service;
 
     private static string NoteKey(StartupItem i) => $"{i.Source}|{i.Locator}";
 
@@ -235,17 +286,23 @@ public sealed partial class StartupPilotViewModel : ObservableObject
     {
         item ??= SelectedItem;
         if (item is null) return;
+        if (item.Source == StartupSource.Service)
+        {
+            var targetType = item.ServiceStartupType == ServiceStartupType.Automatic
+                ? ServiceStartupType.Disabled
+                : ServiceStartupType.Automatic;
+            await SetServiceStartupTypeAsync(item, targetType);
+            return;
+        }
         bool target = !item.Enabled;
 
         if (!target && ConfirmBeforeDisable)
         {
-            var ok = MessageBox.Show(
-                $"Disable '{item.Name}'?\n\n{item.CommandLine}",
-                "Confirm disable",
-                MessageBoxButton.OKCancel, MessageBoxImage.Warning);
-            if (ok != MessageBoxResult.OK) return;
+            if (!_confirm.Confirm($"Disable '{item.Name}'?\n\n{item.CommandLine}", "Confirm disable", destructive: true))
+                return;
         }
 
+        var oldKey = NoteKey(item);
         var result = _controller.Toggle(item, target);
         if (result.NeedsElevation)
         {
@@ -257,6 +314,9 @@ public sealed partial class StartupPilotViewModel : ObservableObject
             _status.Set(result.Message, StatusKind.Error);
             return;
         }
+        var updatedLocator = result.UpdatedLocator ?? item.Locator;
+        MigrateItemMetadata(item, oldKey, updatedLocator);
+        item.Locator = updatedLocator;
 
         var entry = new StartupHistoryEntry
         {
@@ -266,6 +326,8 @@ public sealed partial class StartupPilotViewModel : ObservableObject
         };
         History.Insert(0, entry);
         item.Enabled = target;
+        ItemsView.Refresh();
+        ServicesView.Refresh();
         RaiseCounts();
         _recent.Add("StartupPilot", $"{(target ? "Enabled" : "Disabled")}: {item.Name}");
         _status.Set(result.Message, StatusKind.Success);
@@ -284,25 +346,34 @@ public sealed partial class StartupPilotViewModel : ObservableObject
     }
     private async Task BulkSetAsync(System.Collections.IList? selection, bool enable)
     {
-        if (selection is null || selection.Count == 0)
+        var items = selection?.OfType<StartupItem>().ToList() ?? new List<StartupItem>();
+        if (items.Count == 0)
         {
             _status.Set("Select rows in the table first.", StatusKind.Warning);
             return;
         }
+        var skippedServices = items.RemoveAll(i => i.Source == StartupSource.Service);
+        if (items.Count == 0)
+        {
+            _status.Set("Service items must be changed one at a time.", StatusKind.Warning);
+            return;
+        }
         if (!enable && ConfirmBeforeDisable)
         {
-            var ok = MessageBox.Show($"Disable {selection.Count} items?", "Confirm bulk disable",
-                MessageBoxButton.OKCancel, MessageBoxImage.Warning);
-            if (ok != MessageBoxResult.OK) return;
+            if (!_confirm.Confirm($"Disable {items.Count} items?", "Confirm bulk disable", destructive: true))
+                return;
         }
         int changed = 0, needAdmin = 0, failed = 0;
-        foreach (var s in selection)
+        foreach (var item in items)
         {
-            if (s is not StartupItem item) continue;
             if (item.Enabled == enable) continue;
+            var oldKey = NoteKey(item);
             var r = _controller.Toggle(item, enable);
             if (r.Success)
             {
+                var updatedLocator = r.UpdatedLocator ?? item.Locator;
+                MigrateItemMetadata(item, oldKey, updatedLocator);
+                item.Locator = updatedLocator;
                 History.Insert(0, new StartupHistoryEntry
                 {
                     ItemName = item.Name, Source = item.Source, OldEnabled = item.Enabled,
@@ -314,12 +385,92 @@ public sealed partial class StartupPilotViewModel : ObservableObject
             else if (r.NeedsElevation) needAdmin++;
             else failed++;
         }
+        ItemsView.Refresh();
+        ServicesView.Refresh();
         RaiseCounts();
         _recent.Add("StartupPilot", $"Bulk {(enable ? "enable" : "disable")}: {changed} changed.");
         var msg = $"{changed} changed.";
         if (needAdmin > 0) msg += $" {needAdmin} need administrator.";
         if (failed > 0)    msg += $" {failed} failed.";
-        _status.Set(msg, failed > 0 ? StatusKind.Warning : StatusKind.Success);
+        if (skippedServices > 0) msg += $" {skippedServices} service item(s) skipped.";
+        _status.Set(msg, failed > 0 || skippedServices > 0 ? StatusKind.Warning : StatusKind.Success);
+        await SaveAsync();
+    }
+
+    [RelayCommand]
+    public async Task SetSelectedServiceAutomaticAsync() =>
+        await SetServiceStartupTypeAsync(SelectedService, ServiceStartupType.Automatic);
+
+    [RelayCommand]
+    public async Task SetSelectedServiceManualAsync() =>
+        await SetServiceStartupTypeAsync(SelectedService, ServiceStartupType.Manual);
+
+    [RelayCommand]
+    public async Task SetSelectedServiceDisabledAsync() =>
+        await SetServiceStartupTypeAsync(SelectedService, ServiceStartupType.Disabled);
+
+    public async Task SetServiceStartupTypeAsync(StartupItem? item, ServiceStartupType startupType)
+    {
+        if (item is null) return;
+        if (item.Source != StartupSource.Service)
+        {
+            _status.Set("Select a service first.", StatusKind.Warning);
+            return;
+        }
+        if (item.ServiceStartupType == startupType)
+        {
+            _status.Set($"Service is already {item.StartupTypeLabel}.", StatusKind.Info);
+            return;
+        }
+        if (startupType == ServiceStartupType.Automatic)
+        {
+            if (!_confirm.Confirm(
+                    $"Set '{item.Name}' to Automatic?\n\nThis service can start when Windows starts.",
+                    "Confirm service startup type",
+                    destructive: true))
+                return;
+        }
+        if (startupType == ServiceStartupType.Disabled && ConfirmBeforeDisable)
+        {
+            if (!_confirm.Confirm(
+                    $"Disable service '{item.Name}'?\n\nDisabled services cannot start until their startup type is changed again.",
+                    "Confirm service disable",
+                    destructive: true))
+                return;
+        }
+
+        var oldType = item.ServiceStartupType;
+        var oldEnabled = item.Enabled;
+        var result = _controller.SetServiceStartupType(item, startupType);
+        if (result.NeedsElevation)
+        {
+            _status.Set("Administrator privileges required for that service.", StatusKind.Warning);
+            return;
+        }
+        if (!result.Success)
+        {
+            _status.Set(result.Message, StatusKind.Error);
+            return;
+        }
+
+        item.ServiceStartupType = startupType;
+        item.Enabled = startupType == ServiceStartupType.Automatic;
+        History.Insert(0, new StartupHistoryEntry
+        {
+            ItemName = item.Name,
+            Source = item.Source,
+            OldEnabled = oldEnabled,
+            NewEnabled = item.Enabled,
+            OldServiceStartupType = oldType,
+            NewServiceStartupType = startupType,
+            ItemLocator = item.Locator,
+            Scope = item.Scope,
+        });
+        ItemsView.Refresh();
+        ServicesView.Refresh();
+        RaiseCounts();
+        _recent.Add("StartupPilot", $"Service startup type: {item.Name} → {item.StartupTypeLabel}");
+        _status.Set(result.Message, StatusKind.Success);
         await SaveAsync();
     }
 
@@ -328,11 +479,49 @@ public sealed partial class StartupPilotViewModel : ObservableObject
     {
         if (History.Count == 0) { _status.Set("Nothing to undo.", StatusKind.Info); return; }
         var last = History[0];
-        if (last.OldEnabled == last.NewEnabled) { _status.Set("Last entry has no change.", StatusKind.Info); return; }
+        var hasServiceTypeChange = last.OldServiceStartupType.HasValue &&
+            last.NewServiceStartupType.HasValue &&
+            last.OldServiceStartupType.Value != last.NewServiceStartupType.Value;
+        if (!hasServiceTypeChange && last.OldEnabled == last.NewEnabled)
+        {
+            _status.Set("Last entry has no change.", StatusKind.Info);
+            return;
+        }
         var item = Items.FirstOrDefault(i => i.Locator == last.ItemLocator && i.Source == last.Source);
         if (item is null) { _status.Set("Item no longer present.", StatusKind.Warning); return; }
+        if (last.Source == StartupSource.Service && last.OldServiceStartupType.HasValue)
+        {
+            var oldType = item.ServiceStartupType;
+            var oldEnabled = item.Enabled;
+            var rService = _controller.SetServiceStartupType(item, last.OldServiceStartupType.Value);
+            if (rService.NeedsElevation) { _status.Set("Undo requires administrator privileges.", StatusKind.Warning); return; }
+            if (!rService.Success) { _status.Set("Undo failed: " + rService.Message, StatusKind.Error); return; }
+            item.ServiceStartupType = last.OldServiceStartupType.Value;
+            item.Enabled = item.ServiceStartupType == ServiceStartupType.Automatic;
+            History.RemoveAt(0);
+            History.Insert(0, new StartupHistoryEntry
+            {
+                ItemName = item.Name, Source = item.Source,
+                OldEnabled = oldEnabled, NewEnabled = item.Enabled,
+                OldServiceStartupType = oldType,
+                NewServiceStartupType = item.ServiceStartupType,
+                ItemLocator = item.Locator, Scope = item.Scope,
+            });
+            ItemsView.Refresh();
+            ServicesView.Refresh();
+            RaiseCounts();
+            _recent.Add("StartupPilot", $"Undo service startup type: {item.Name}");
+            _status.Set("Undid last change.", StatusKind.Success);
+            await SaveAsync();
+            return;
+        }
+        var oldKey = NoteKey(item);
         var r = _controller.Toggle(item, last.OldEnabled);
+        if (r.NeedsElevation) { _status.Set("Undo requires administrator privileges.", StatusKind.Warning); return; }
         if (!r.Success) { _status.Set("Undo failed: " + r.Message, StatusKind.Error); return; }
+        var updatedLocator = r.UpdatedLocator ?? item.Locator;
+        MigrateItemMetadata(item, oldKey, updatedLocator);
+        item.Locator = updatedLocator;
         item.Enabled = last.OldEnabled;
         History.RemoveAt(0);
         History.Insert(0, new StartupHistoryEntry
@@ -341,6 +530,8 @@ public sealed partial class StartupPilotViewModel : ObservableObject
             OldEnabled = last.NewEnabled, NewEnabled = last.OldEnabled,
             ItemLocator = item.Locator, Scope = item.Scope,
         });
+        ItemsView.Refresh();
+        ServicesView.Refresh();
         RaiseCounts();
         _recent.Add("StartupPilot", $"Undo: {item.Name}");
         _status.Set("Undid last change.", StatusKind.Success);
@@ -381,6 +572,7 @@ public sealed partial class StartupPilotViewModel : ObservableObject
         if (item.IsPinned) Settings.Pinned.Add(key);
         else Settings.Pinned.Remove(key);
         ItemsView.Refresh();
+        ServicesView.Refresh();
         await SaveAsync();
     }
 
@@ -391,6 +583,20 @@ public sealed partial class StartupPilotViewModel : ObservableObject
         if (string.IsNullOrWhiteSpace(item.Note)) Settings.Notes.Remove(key);
         else Settings.Notes[key] = item.Note;
         await SaveAsync();
+    }
+
+    private void MigrateItemMetadata(StartupItem item, string oldKey, string updatedLocator)
+    {
+        var newKey = $"{item.Source}|{updatedLocator}";
+        if (string.Equals(oldKey, newKey, StringComparison.Ordinal)) return;
+
+        var hadNote = Settings.Notes.Remove(oldKey, out var note);
+        var noteToKeep = string.IsNullOrWhiteSpace(item.Note) ? note : item.Note;
+        if ((hadNote || !string.IsNullOrWhiteSpace(item.Note)) && !string.IsNullOrWhiteSpace(noteToKeep))
+            Settings.Notes[newKey] = noteToKeep;
+
+        if (Settings.Pinned.Remove(oldKey) || item.IsPinned)
+            Settings.Pinned.Add(newKey);
     }
 
     [RelayCommand]
@@ -407,7 +613,7 @@ public sealed partial class StartupPilotViewModel : ObservableObject
             using var w = new StreamWriter(dlg.FileName);
             w.WriteLine("Timestamp,Item,Source,Scope,Old,New");
             foreach (var h in History)
-                w.WriteLine($"\"{h.TimestampDisplay}\",\"{Escape(h.ItemName)}\",\"{h.Source}\",\"{Escape(h.Scope)}\",\"{(h.OldEnabled ? "Enabled" : "Disabled")}\",\"{(h.NewEnabled ? "Enabled" : "Disabled")}\"");
+                w.WriteLine($"\"{h.TimestampDisplay}\",\"{Escape(h.ItemName)}\",\"{h.Source}\",\"{Escape(h.Scope)}\",\"{h.OldValueLabel}\",\"{h.NewValueLabel}\"");
             _status.Set("History exported.", StatusKind.Success);
         }
         catch (Exception ex)
@@ -424,6 +630,6 @@ public sealed partial class StartupPilotViewModel : ObservableObject
     {
         if (IsAdmin) { _status.Set("Already running as administrator.", StatusKind.Info); return; }
         if (!_permissions.TryRelaunchAsAdmin()) _status.Set("Elevation cancelled.", StatusKind.Warning);
-        else App.Instance.Shell?.Close();
+        else App.Instance.Shell?.ForceClose();
     }
 }

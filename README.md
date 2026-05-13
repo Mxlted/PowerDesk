@@ -2,10 +2,12 @@
 
 A modular, local-first PC tool hub for Windows - inspired by Microsoft PowerToys, designed to grow one tool at a time.
 
+Current beta release: **v0.2.0**.
+
 The first release ships with two built-in tools:
 
 - **[WindowSizer](https://github.com/Mxlted/WindowSizer)** - resize, snap, pin, center, and reposition windows with pixel precision. Saved size presets, layout presets, multi-monitor support, and global hotkeys.
-- **[StartupPilot](https://github.com/Mxlted/StartupPilot)** - see and control everything Windows runs at sign-in: registry `Run` keys, Startup folders, scheduled tasks, and auto-start services. Per-source filters, impact estimates, orphan detection, change history with undo, and CSV export.
+- **[StartupPilot](https://github.com/Mxlted/StartupPilot)** - see and control everything Windows runs at sign-in: registry `Run` keys, Startup folders, scheduled tasks, and services. Startup entries show Task Manager-style enabled/disabled state, while services live in their own section with Automatic, Manual, and Disabled startup type controls. Per-source filters, impact estimates, orphan detection, change history with undo, and CSV export are included.
 
 PowerDesk runs entirely on your machine. No account, no sign-in, no telemetry, no network calls.
 
@@ -16,7 +18,7 @@ PowerDesk runs entirely on your machine. No account, no sign-in, no telemetry, n
 PowerDesk is **in active beta**. It directly edits Windows registry keys, Startup folders, scheduled tasks, and service start types. Used carelessly, those changes can:
 
 - Stop drivers, vendor utilities, or input devices from loading at boot
-- Disable services your apps or games rely on
+- Disable or misconfigure services your apps or games rely on
 - Leave your machine in a state that takes Task Manager or `services.msc` to recover from
 
 **Do not disable anything if you don't know what it is.** When in doubt, look the item up before toggling it. If you're not comfortable with the consequences of changing what Windows runs at startup, this tool is not for you yet.
@@ -63,7 +65,7 @@ dotnet run
 Build a single-file self-contained release:
 
 ```
-dotnet publish PowerDesk/PowerDesk.csproj -c Release -r win-x64 --self-contained ^
+dotnet publish PowerDesk.csproj -c Release -r win-x64 --self-contained ^
   -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o "../publish"
 ```
 

@@ -3,8 +3,8 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        Title="PowerDesk" Height="780" Width="1240"
-        MinWidth="980" MinHeight="600"
+        Title="PowerDesk" Height="900" Width="1600"
+        MinWidth="1120" MinHeight="680"
         Background="{DynamicResource SurfaceBaseBrush}"
         Foreground="{DynamicResource TextPrimaryBrush}"
         FontFamily="{StaticResource AppFont}"
@@ -40,33 +40,41 @@
 
                 <!-- Search filter -->
                 <Border DockPanel.Dock="Top" Margin="12,4,12,8">
-                    <TextBox x:Name="SearchBox" Padding="10,7" TextChanged="SearchBox_TextChanged"
-                             Tag="Filter tools">
-                        <TextBox.Style>
-                            <Style TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
-                                <Style.Triggers>
-                                    <Trigger Property="Text" Value="">
-                                        <Setter Property="Background">
-                                            <Setter.Value>
-                                                <VisualBrush AlignmentX="Left" AlignmentY="Center" Stretch="None">
-                                                    <VisualBrush.Visual>
-                                                        <TextBlock Text="  Search tools…"
-                                                                   Foreground="{DynamicResource TextSecondaryBrush}"/>
-                                                    </VisualBrush.Visual>
-                                                </VisualBrush>
-                                            </Setter.Value>
-                                        </Setter>
-                                    </Trigger>
-                                </Style.Triggers>
-                            </Style>
-                        </TextBox.Style>
-                    </TextBox>
+                    <Grid>
+                        <TextBox x:Name="SearchBox" Padding="10,7" TextChanged="SearchBox_TextChanged"
+                                 AutomationProperties.Name="Search tools"
+                                 ToolTip="Filter the tool list."/>
+                        <!-- Watermark sits in front of an empty TextBox and is hidden once the user types or focuses. -->
+                        <TextBlock x:Name="SearchPlaceholder"
+                                   Text="Search tools…"
+                                   IsHitTestVisible="False"
+                                   Margin="14,0,0,0"
+                                   VerticalAlignment="Center"
+                                   HorizontalAlignment="Left"
+                                   Foreground="{DynamicResource TextSecondaryBrush}">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                    <Style.Triggers>
+                                        <MultiDataTrigger>
+                                            <MultiDataTrigger.Conditions>
+                                                <Condition Binding="{Binding Text, ElementName=SearchBox}" Value=""/>
+                                                <Condition Binding="{Binding IsKeyboardFocusWithin, ElementName=SearchBox}" Value="False"/>
+                                            </MultiDataTrigger.Conditions>
+                                            <Setter Property="Visibility" Value="Visible"/>
+                                        </MultiDataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </Grid>
                 </Border>
 
                 <!-- Bottom (Settings / About) -->
                 <StackPanel DockPanel.Dock="Bottom" Margin="0,0,0,12">
                     <Border Height="1" Background="{DynamicResource DividerBrush}" Margin="16,8"/>
-                    <RadioButton x:Name="NavSettings" Style="{StaticResource NavItem}" Checked="Nav_Checked" Tag="Settings">
+                    <RadioButton x:Name="NavSettings" Style="{StaticResource NavItem}" Checked="Nav_Checked" Tag="Settings"
+                                 AutomationProperties.Name="Settings" ToolTip="PowerDesk settings">
                         <StackPanel Orientation="Horizontal">
                             <Path Width="16" Height="16" Stretch="Uniform"
                                   Data="M 12,8 a 4,4 0 1 0 0.001,0 z M 19.43,12.98 l 2.11,1.65 -2,3.46 -2.49,-1 a 7.7,7.7 0 0 1 -2.06,1.2 l -0.38,2.71 h -4 l -0.38,-2.71 a 7.7,7.7 0 0 1 -2.06,-1.2 l -2.49,1 -2,-3.46 2.11,-1.65 a 7.6,7.6 0 0 1 0,-2.38 L 3.68,8.95 5.68,5.49 8.17,6.5 a 7.7,7.7 0 0 1 2.06,-1.2 L 10.61,2.59 h 4 l 0.38,2.71 a 7.7,7.7 0 0 1 2.06,1.2 l 2.49,-1 2,3.46 -2.11,1.65 a 7.6,7.6 0 0 1 0,2.38 z"
@@ -74,7 +82,8 @@
                             <TextBlock Text="Settings" Margin="12,0,0,0" VerticalAlignment="Center"/>
                         </StackPanel>
                     </RadioButton>
-                    <RadioButton x:Name="NavAbout" Style="{StaticResource NavItem}" Checked="Nav_Checked" Tag="About">
+                    <RadioButton x:Name="NavAbout" Style="{StaticResource NavItem}" Checked="Nav_Checked" Tag="About"
+                                 AutomationProperties.Name="About" ToolTip="About PowerDesk">
                         <StackPanel Orientation="Horizontal">
                             <Path Width="16" Height="16" Stretch="Uniform"
                                   Data="M 12,2 a 10,10 0 1 0 0,20 a 10,10 0 0 0 0,-20 z M 12,7 a 1.2,1.2 0 1 1 0,2.4 a 1.2,1.2 0 0 1 0,-2.4 z M 11,11 h 2 v 7 h -2 z"
@@ -87,7 +96,8 @@
                 <!-- Main nav -->
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel x:Name="NavStack">
-                        <RadioButton x:Name="NavDashboard" Style="{StaticResource NavItem}" Checked="Nav_Checked" Tag="Dashboard" IsChecked="True">
+                        <RadioButton x:Name="NavDashboard" Style="{StaticResource NavItem}" Checked="Nav_Checked" Tag="Dashboard" IsChecked="True"
+                                     AutomationProperties.Name="Dashboard" ToolTip="Dashboard">
                             <StackPanel Orientation="Horizontal">
                                 <Path Width="16" Height="16" Stretch="Uniform"
                                       Data="M 3,3 H 10 V 12 H 3 Z M 14,3 H 21 V 8 H 14 Z M 14,12 H 21 V 21 H 14 Z M 3,16 H 10 V 21 H 3 Z"
@@ -103,7 +113,9 @@
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
                                     <RadioButton Style="{StaticResource NavItem}" Checked="Nav_Checked"
-                                                 Tag="{Binding Id}">
+                                                 Tag="{Binding Id}"
+                                                 AutomationProperties.Name="{Binding DisplayName}"
+                                                 ToolTip="{Binding DisplayName}">
                                         <StackPanel Orientation="Horizontal">
                                             <Path Width="16" Height="16" Stretch="Uniform"
                                                   Fill="{DynamicResource TextSecondaryBrush}"
@@ -143,7 +155,8 @@
                     <TextBlock Grid.Column="1" x:Name="StatusText" VerticalAlignment="Center"
                                Foreground="{DynamicResource TextSecondaryBrush}"/>
                     <TextBlock Grid.Column="2" x:Name="AdminBadge" VerticalAlignment="Center"
-                               Foreground="{DynamicResource WarningBrush}" FontWeight="SemiBold"/>
+                               Foreground="{DynamicResource WarningBrush}" FontWeight="SemiBold"
+                               ToolTip="PowerDesk is running with elevated privileges."/>
                 </Grid>
             </Border>
         </Grid>

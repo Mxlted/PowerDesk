@@ -273,7 +273,7 @@
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="CheckBox">
-                    <StackPanel Orientation="Horizontal">
+                    <StackPanel x:Name="Root" Orientation="Horizontal">
                         <Border x:Name="Track" Width="36" Height="20"
                                 Background="{DynamicResource SurfaceActiveBrush}"
                                 CornerRadius="10" VerticalAlignment="Center">
@@ -291,6 +291,10 @@
                             <Setter TargetName="Thumb" Property="HorizontalAlignment" Value="Right"/>
                             <Setter TargetName="Thumb" Property="Margin" Value="0,0,3,0"/>
                             <Setter TargetName="Thumb" Property="Background" Value="{DynamicResource OnAccentBrush}"/>
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="Root"  Property="Opacity" Value="0.45"/>
+                            <Setter Property="Cursor" Value="Arrow"/>
                         </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>

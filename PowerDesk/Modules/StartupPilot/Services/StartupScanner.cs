@@ -20,6 +20,8 @@ namespace PowerDesk.Modules.StartupPilot.Services;
 /// </summary>
 public sealed class StartupScanner
 {
+    private const string StartupApprovedRoot = @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved";
+
     private readonly ILogger _log;
     private readonly IconService _icons;
 
@@ -68,8 +70,10 @@ public sealed class StartupScanner
     {
         foreach (var (hive, path, scope) in RegistryKeys)
         {
+            // HKLM: force Registry64 so we read the real 64-bit keys; the Wow6432Node paths are
+            // listed explicitly in RegistryKeys so we don't want WoW redirection to fold them in.
             using var baseKey = RegistryKey.OpenBaseKey(hive,
-                hive == RegistryHive.LocalMachine ? RegistryView.Default : RegistryView.Default);
+                hive == RegistryHive.LocalMachine ? RegistryView.Registry64 : RegistryView.Default);
             using var key = baseKey.OpenSubKey(path, writable: false);
             if (key is null) continue;
 
@@ -77,8 +81,11 @@ public sealed class StartupScanner
             {
                 if (string.IsNullOrEmpty(rawName)) continue;
                 var cmd = key.GetValue(rawName)?.ToString() ?? string.Empty;
-                bool enabled = !rawName.StartsWith("!", StringComparison.Ordinal);
-                var name = enabled ? rawName : rawName.TrimStart('!');
+                var legacyDisabled = rawName.StartsWith("!", StringComparison.Ordinal);
+                var name = legacyDisabled ? rawName.TrimStart('!') : rawName;
+                bool enabled = !legacyDisabled;
+                var approved = ReadStartupApprovedState(hive, StartupApprovedSubkeyForRegistryPath(path), name);
+                if (approved.HasValue) enabled = approved.Value && !legacyDisabled;
 
                 if (!includeMicrosoft && LooksLikeMicrosoft(cmd, name)) continue;
 
@@ -127,6 +134,13 @@ public sealed class StartupScanner
             string target = ResolveShortcut(file);
             string name = Path.GetFileNameWithoutExtension(file);
             if (!includeMicrosoft && LooksLikeMicrosoft(target, name)) continue;
+            bool enabled = !isDisabled;
+            if (!isDisabled)
+            {
+                var approvedHive = admin ? RegistryHive.LocalMachine : RegistryHive.CurrentUser;
+                var approved = ReadStartupApprovedState(approvedHive, "StartupFolder", Path.GetFileName(file));
+                if (approved.HasValue) enabled = approved.Value;
+            }
             yield return new StartupItem
             {
                 Source = StartupSource.StartupFolder,
@@ -134,7 +148,7 @@ public sealed class StartupScanner
                 Name = name,
                 CommandLine = target,
                 TargetPath = ExtractExecutablePath(target),
-                Enabled = !isDisabled,
+                Enabled = enabled,
                 Locator = file,
                 RequiresAdmin = admin,
             };
@@ -238,11 +252,17 @@ public sealed class StartupScanner
                 using var key = Registry.LocalMachine.OpenSubKey($@"SYSTEM\CurrentControlSet\Services\{sc.ServiceName}", writable: false);
                 if (key is null) { sc.Dispose(); continue; }
                 int start = (int)(key.GetValue("Start") ?? 4);
-                // 2 = Automatic, 3 = Manual, 4 = Disabled. We track items that *would* run at startup.
-                if (start != 2 && start != 4) { sc.Dispose(); continue; }
+                var startupType = start switch
+                {
+                    2 => ServiceStartupType.Automatic,
+                    3 => ServiceStartupType.Manual,
+                    4 => ServiceStartupType.Disabled,
+                    _ => ServiceStartupType.Unknown,
+                };
+                if (startupType == ServiceStartupType.Unknown) { sc.Dispose(); continue; }
 
                 string path = (key.GetValue("ImagePath") as string) ?? string.Empty;
-                path = Environment.ExpandEnvironmentVariables(path).Trim('"');
+                path = Environment.ExpandEnvironmentVariables(path);
                 string desc = (key.GetValue("Description") as string) ?? string.Empty;
                 if (desc.StartsWith("@")) desc = string.Empty; // mui ref, skip
                 string display = sc.DisplayName ?? sc.ServiceName;
@@ -257,7 +277,8 @@ public sealed class StartupScanner
                     Description = desc,
                     CommandLine = path,
                     TargetPath = ExtractExecutablePath(path),
-                    Enabled = start == 2,
+                    Enabled = startupType == ServiceStartupType.Automatic,
+                    ServiceStartupType = startupType,
                     Locator = sc.ServiceName,
                     RequiresAdmin = true,
                 };
@@ -289,10 +310,10 @@ public sealed class StartupScanner
                 try
                 {
                     var info = FileVersionInfo.GetVersionInfo(path);
-                    var pub = !string.IsNullOrWhiteSpace(info.CompanyName) ? info.CompanyName : string.Empty;
-                    var desc = !string.IsNullOrWhiteSpace(info.FileDescription) ? info.FileDescription : string.Empty;
-                    if (string.IsNullOrEmpty(item.Publisher)) typeof(StartupItem).GetProperty(nameof(StartupItem.Publisher))?.SetValue(item, pub);
-                    if (string.IsNullOrEmpty(item.Description)) typeof(StartupItem).GetProperty(nameof(StartupItem.Description))?.SetValue(item, desc);
+                    if (string.IsNullOrEmpty(item.Publisher) && !string.IsNullOrWhiteSpace(info.CompanyName))
+                        item.Publisher = info.CompanyName!;
+                    if (string.IsNullOrEmpty(item.Description) && !string.IsNullOrWhiteSpace(info.FileDescription))
+                        item.Description = info.FileDescription!;
                 }
                 catch { }
                 item.IsOrphaned = false;
@@ -318,18 +339,59 @@ public sealed class StartupScanner
         return lname.StartsWith("microsoft ") || lname.StartsWith("windows ");
     }
 
+    private static string? StartupApprovedSubkeyForRegistryPath(string runKeyPath)
+    {
+        if (runKeyPath.Equals(@"Software\Microsoft\Windows\CurrentVersion\Run", StringComparison.OrdinalIgnoreCase))
+            return "Run";
+        if (runKeyPath.Equals(@"Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Run", StringComparison.OrdinalIgnoreCase))
+            return "Run32";
+        return null;
+    }
+
+    private static bool? ReadStartupApprovedState(RegistryHive hive, string? approvedSubkey, string valueName)
+    {
+        if (string.IsNullOrWhiteSpace(approvedSubkey) || string.IsNullOrWhiteSpace(valueName)) return null;
+        try
+        {
+            using var baseKey = RegistryKey.OpenBaseKey(hive,
+                hive == RegistryHive.LocalMachine ? RegistryView.Registry64 : RegistryView.Default);
+            using var key = baseKey.OpenSubKey($@"{StartupApprovedRoot}\{approvedSubkey}", writable: false);
+            var data = key?.GetValue(valueName) as byte[];
+            if (data is null || data.Length == 0) return null;
+            var state = data.Length >= 4 ? BitConverter.ToInt32(data, 0) : data[0];
+            return state switch
+            {
+                2 => true,
+                3 => false,
+                _ => null,
+            };
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     public static string ExtractExecutablePath(string command)
     {
         if (string.IsNullOrWhiteSpace(command)) return string.Empty;
-        var s = command.Trim();
+        var s = Environment.ExpandEnvironmentVariables(command.Trim());
         if (s.StartsWith("\""))
         {
             int end = s.IndexOf('"', 1);
-            if (end > 1) return s.Substring(1, end - 1);
+            if (end > 1) return Environment.ExpandEnvironmentVariables(s.Substring(1, end - 1));
         }
+
+        // Many startup entries omit quotes around paths under "Program Files".
+        // Prefer the first executable-looking prefix before falling back to the first token.
+        foreach (var ext in new[] { ".exe", ".com", ".bat", ".cmd" })
+        {
+            var end = s.IndexOf(ext, StringComparison.OrdinalIgnoreCase);
+            if (end > 0)
+                return s[..(end + ext.Length)].Trim();
+        }
+
         int sp = s.IndexOf(' ');
-        var head = sp > 0 ? s[..sp] : s;
-        head = Environment.ExpandEnvironmentVariables(head);
-        return head;
+        return (sp > 0 ? s[..sp] : s).Trim();
     }
 }

@@ -45,7 +45,7 @@ public sealed class JsonStorageService
         finally { _gate.Release(); }
     }
 
-    public async Task SaveAsync<T>(string path, T value)
+    public async Task<bool> SaveAsync<T>(string path, T value)
     {
         await _gate.WaitAsync().ConfigureAwait(false);
         try
@@ -72,10 +72,12 @@ public sealed class JsonStorageService
                 {
                     File.Move(tmp, path);
                 }
+                return true;
             }
             catch (Exception ex)
             {
                 _log.Error($"Save failed for {path}: {ex.Message}", ex);
+                return false;
             }
         }
         finally { _gate.Release(); }

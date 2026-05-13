@@ -16,6 +16,7 @@ public sealed class StartupPilotModule : IPowerDeskModule
     public string DisplayName => "StartupPilot";
     public string Description => "See and control everything Windows runs at sign-in: registry, startup folder, tasks, and services.";
     public string IconKey => "StartupPilot";
+    public string IconGeometry => "M 12,2 L 5,12 H 10 V 22 L 19,10 H 13 Z";
     public bool RequiresAdminForFullControl => true;
 
     public StartupPilotViewModel ViewModel { get; }
@@ -27,9 +28,10 @@ public sealed class StartupPilotModule : IPowerDeskModule
         StatusService status,
         RecentActionsService recent,
         IconService icons,
-        PermissionService permissions)
+        PermissionService permissions,
+        IConfirmationService confirm)
     {
-        ViewModel = new StartupPilotViewModel(log, storage, status, recent, icons, permissions);
+        ViewModel = new StartupPilotViewModel(log, storage, status, recent, icons, permissions, confirm);
         MainView = new StartupPilotView(ViewModel);
     }
 

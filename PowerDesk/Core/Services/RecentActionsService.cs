@@ -13,6 +13,7 @@ public sealed class RecentAction
 
 /// <summary>
 /// Lightweight cross-module activity feed used by the dashboard.
+/// Mutations are marshalled to the UI thread so background callers can append safely.
 /// </summary>
 public sealed class RecentActionsService
 {
@@ -22,8 +23,10 @@ public sealed class RecentActionsService
     public void Add(string module, string description)
     {
         var action = new RecentAction { Module = module, Description = description };
-        // Marshalling to UI thread is the caller's job; collection is created on the UI thread at startup.
-        Items.Insert(0, action);
-        while (Items.Count > Max) Items.RemoveAt(Items.Count - 1);
+        UiDispatcher.Invoke(() =>
+        {
+            Items.Insert(0, action);
+            while (Items.Count > Max) Items.RemoveAt(Items.Count - 1);
+        });
     }
 }

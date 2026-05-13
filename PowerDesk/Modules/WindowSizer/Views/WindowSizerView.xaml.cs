@@ -4,6 +4,7 @@ using PowerDesk.Modules.WindowSizer.Models;
 using PowerDesk.Modules.WindowSizer.ViewModels;
 using static PowerDesk.Modules.WindowSizer.Services.NativeMethods;
 using UserControl = System.Windows.Controls.UserControl;
+using CheckBox = System.Windows.Controls.CheckBox;
 using ComboBoxItem = System.Windows.Controls.ComboBoxItem;
 using KeyEventArgs = System.Windows.Input.KeyEventArgs;
 using Key = System.Windows.Input.Key;
@@ -32,15 +33,17 @@ public partial class WindowSizerView : UserControl, INotifyPropertyChanged
         InitializeComponent();
         _vm = vm;
         DataContext = vm;
+        ActionPicker.SelectedIndex = 0;
     }
 
     private void HotkeyRecorder_PreviewKeyDown(object sender, KeyEventArgs e)
     {
         e.Handled = true;
+        var key = e.Key == Key.System ? e.SystemKey : e.Key;
 
         // Skip pure-modifier presses (the user is still building the chord).
-        if (e.Key is Key.LeftAlt or Key.RightAlt or Key.LeftCtrl or Key.RightCtrl
-                  or Key.LeftShift or Key.RightShift or Key.LWin or Key.RWin or Key.System)
+        if (key is Key.LeftAlt or Key.RightAlt or Key.LeftCtrl or Key.RightCtrl
+                or Key.LeftShift or Key.RightShift or Key.LWin or Key.RWin)
         {
             return;
         }
@@ -52,7 +55,6 @@ public partial class WindowSizerView : UserControl, INotifyPropertyChanged
         if ((mods & ModifierKeys.Shift)   != 0) modFlags |= MOD_SHIFT;
         if ((mods & ModifierKeys.Windows) != 0) modFlags |= MOD_WIN;
 
-        var key = e.Key == Key.System ? e.SystemKey : e.Key;
         var vk = (uint)KeyInterop.VirtualKeyFromKey(key);
         if (modFlags == 0 || vk == 0)
         {
@@ -95,4 +97,16 @@ public partial class WindowSizerView : UserControl, INotifyPropertyChanged
     }
 
     private void ReapplyHotkeys_Click(object sender, RoutedEventArgs e) => _vm?.RefreshHotkeyRegistrations();
+
+    private async void HotkeyEnable_Click(object sender, RoutedEventArgs e)
+    {
+        if (_vm is null) return;
+        if (sender is CheckBox cb && cb.DataContext is HotkeyBinding b)
+        {
+            bool target = cb.IsChecked == true;
+            // Keep the visual in sync with the model until we've committed. The VM is the source of truth.
+            cb.IsChecked = b.Enabled;
+            await _vm.SetHotkeyEnabledAsync(b, target);
+        }
+    }
 }

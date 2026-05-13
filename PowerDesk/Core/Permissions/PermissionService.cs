@@ -6,18 +6,20 @@ namespace PowerDesk.Core.Permissions;
 
 public sealed class PermissionService
 {
-    public bool IsAdministrator
+    // Token elevation does not change for the lifetime of the process, so we resolve once.
+    private readonly Lazy<bool> _isAdmin = new(ComputeIsAdministrator, isThreadSafe: true);
+
+    public bool IsAdministrator => _isAdmin.Value;
+
+    private static bool ComputeIsAdministrator()
     {
-        get
+        try
         {
-            try
-            {
-                using var id = WindowsIdentity.GetCurrent();
-                var p = new WindowsPrincipal(id);
-                return p.IsInRole(WindowsBuiltInRole.Administrator);
-            }
-            catch { return false; }
+            using var id = WindowsIdentity.GetCurrent();
+            var p = new WindowsPrincipal(id);
+            return p.IsInRole(WindowsBuiltInRole.Administrator);
         }
+        catch { return false; }
     }
 
     /// <summary>

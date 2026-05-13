@@ -1,8 +1,7 @@
 using System;
-using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
-using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media.Imaging;
@@ -11,12 +10,19 @@ using PowerDesk.Core.Logging;
 namespace PowerDesk.Core.Services;
 
 /// <summary>
-/// Resolves a small executable icon to a frozen WPF BitmapSource, with an in-memory cache keyed by full path
-/// (lowered). Falls back to the shell's generic icon and finally <c>null</c>.
+/// Resolves a small executable icon to a frozen WPF BitmapSource, with a bounded LRU cache keyed
+/// by full path (case-insensitive). Falls back to <c>null</c> when extraction fails. Bounded so
+/// long-running sessions on machines with lots of executable churn don't grow memory unboundedly.
 /// </summary>
 public sealed class IconService
 {
-    private readonly ConcurrentDictionary<string, BitmapSource?> _cache = new(StringComparer.OrdinalIgnoreCase);
+    private const int MaxEntries = 512;
+
+    // LinkedList tracks LRU order; map points entries by path so we can move them to the front.
+    private readonly LinkedList<(string Key, BitmapSource? Bmp)> _lru = new();
+    private readonly Dictionary<string, LinkedListNode<(string Key, BitmapSource? Bmp)>> _map =
+        new(StringComparer.OrdinalIgnoreCase);
+    private readonly object _sync = new();
     private readonly ILogger _log;
 
     public IconService(ILogger log) => _log = log;
@@ -29,7 +35,15 @@ public sealed class IconService
         var path = NormalizeExePath(exePath);
         if (string.IsNullOrWhiteSpace(path)) return null;
 
-        if (_cache.TryGetValue(path, out var cached)) return cached;
+        lock (_sync)
+        {
+            if (_map.TryGetValue(path, out var existing))
+            {
+                _lru.Remove(existing);
+                _lru.AddFirst(existing);
+                return existing.Value.Bmp;
+            }
+        }
 
         BitmapSource? bmp = null;
         try
@@ -52,7 +66,25 @@ public sealed class IconService
             _log.Warn($"IconService: failed to extract icon for '{path}': {ex.Message}");
         }
 
-        _cache[path] = bmp;
+        lock (_sync)
+        {
+            // Another thread may have raced us — if so, prefer the existing entry.
+            if (_map.TryGetValue(path, out var existing))
+            {
+                _lru.Remove(existing);
+                _lru.AddFirst(existing);
+                return existing.Value.Bmp;
+            }
+            var node = new LinkedListNode<(string, BitmapSource?)>((path, bmp));
+            _lru.AddFirst(node);
+            _map[path] = node;
+            while (_lru.Count > MaxEntries)
+            {
+                var last = _lru.Last!;
+                _lru.RemoveLast();
+                _map.Remove(last.Value.Key);
+            }
+        }
         return bmp;
     }
 
@@ -60,7 +92,7 @@ public sealed class IconService
     {
         try
         {
-            var proc = System.Diagnostics.Process.GetProcessById(pid);
+            using var proc = System.Diagnostics.Process.GetProcessById(pid);
             var path = proc.MainModule?.FileName;
             return GetIcon(path);
         }

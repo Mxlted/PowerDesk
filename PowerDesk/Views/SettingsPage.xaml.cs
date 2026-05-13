@@ -45,9 +45,20 @@ public partial class SettingsPage : UserControl
         if (ThemeBox.SelectedItem is ComboBoxItem item && item.Tag is string tag &&
             Enum.TryParse<AppTheme>(tag, out var theme))
         {
+            var previous = App.Instance.Settings.Theme;
             App.Instance.ThemeService.Apply(theme);
             App.Instance.Settings.Theme = theme;
-            await App.Instance.SaveSettingsAsync();
+            if (!await App.Instance.SaveSettingsAsync())
+            {
+                App.Instance.Settings.Theme = previous;
+                App.Instance.ThemeService.Apply(previous);
+                _loading = true;
+                foreach (ComboBoxItem themeItem in ThemeBox.Items)
+                    if ((string)themeItem.Tag == previous.ToString())
+                        ThemeBox.SelectedItem = themeItem;
+                _loading = false;
+                App.Instance.Status.Set("Could not save theme setting.", StatusKind.Error);
+            }
         }
     }
 
@@ -55,9 +66,20 @@ public partial class SettingsPage : UserControl
     {
         if (_loading) return;
         var app = App.Instance;
+        var previousStartMinimized = app.Settings.StartMinimized;
+        var previousTrayOnClose = app.Settings.MinimizeToTrayOnClose;
         app.Settings.StartMinimized = StartMinimizedBox.IsChecked == true;
         app.Settings.MinimizeToTrayOnClose = TrayOnCloseBox.IsChecked == true;
-        await app.SaveSettingsAsync();
+        if (!await app.SaveSettingsAsync())
+        {
+            app.Settings.StartMinimized = previousStartMinimized;
+            app.Settings.MinimizeToTrayOnClose = previousTrayOnClose;
+            _loading = true;
+            StartMinimizedBox.IsChecked = previousStartMinimized;
+            TrayOnCloseBox.IsChecked = previousTrayOnClose;
+            _loading = false;
+            app.Status.Set("Could not save behavior setting.", StatusKind.Error);
+        }
     }
 
     private async void RunAtStartup_Changed(object sender, RoutedEventArgs e)
@@ -65,36 +87,85 @@ public partial class SettingsPage : UserControl
         if (_loading) return;
         var app = App.Instance;
         bool enable = RunAtStartupBox.IsChecked == true;
+        bool previous = app.Settings.RunAtWindowsStartup;
+
+        // Update the registry FIRST; only flip the persisted setting after the registry write
+        // succeeded. If the subsequent save fails we restore the registry to keep the two in sync.
         try
         {
             using var key = Registry.CurrentUser.CreateSubKey(RunKey, writable: true)!;
             if (enable)
             {
                 var exe = Process.GetCurrentProcess().MainModule?.FileName ?? string.Empty;
-                if (!string.IsNullOrEmpty(exe))
-                    key.SetValue(RunValue, $"\"{exe}\"");
+                if (string.IsNullOrEmpty(exe))
+                {
+                    app.Status.Set("Could not determine PowerDesk's exe path.", StatusKind.Error);
+                    _loading = true; RunAtStartupBox.IsChecked = previous; _loading = false;
+                    return;
+                }
+                key.SetValue(RunValue, $"\"{exe}\"");
             }
             else
             {
                 try { key.DeleteValue(RunValue, throwOnMissingValue: false); } catch { }
             }
-            app.Settings.RunAtWindowsStartup = enable;
-            await app.SaveSettingsAsync();
-            app.Status.Set(enable ? "PowerDesk will start with Windows." : "Removed from Windows startup.", StatusKind.Success);
         }
         catch (Exception ex)
         {
-            app.Logger.Error("Toggle startup failed", ex);
+            app.Logger.Error("Toggle startup (registry)", ex);
             app.Status.Set("Could not update Windows startup entry.", StatusKind.Error);
+            _loading = true; RunAtStartupBox.IsChecked = previous; _loading = false;
+            return;
         }
+
+        app.Settings.RunAtWindowsStartup = enable;
+        var saved = false;
+        try { saved = await app.SaveSettingsAsync(); }
+        catch (Exception ex) { app.Logger.Error("Toggle startup (save)", ex); }
+
+        if (saved)
+        {
+            app.Status.Set(enable ? "PowerDesk will start with Windows." : "Removed from Windows startup.", StatusKind.Success);
+            return;
+        }
+
+        // Save failed: roll the registry back so what's on disk matches what's persisted.
+        try
+        {
+            using var key = Registry.CurrentUser.CreateSubKey(RunKey, writable: true);
+            if (key is not null)
+            {
+                if (previous)
+                {
+                    var exe = Process.GetCurrentProcess().MainModule?.FileName ?? string.Empty;
+                    if (!string.IsNullOrEmpty(exe)) key.SetValue(RunValue, $"\"{exe}\"");
+                }
+                else
+                {
+                    key.DeleteValue(RunValue, throwOnMissingValue: false);
+                }
+            }
+        }
+        catch (Exception revertEx) { app.Logger.Error("Toggle startup revert", revertEx); }
+        app.Settings.RunAtWindowsStartup = previous;
+        _loading = true; RunAtStartupBox.IsChecked = previous; _loading = false;
+        app.Status.Set("Could not persist startup change.", StatusKind.Error);
     }
 
     private async void GlobalHotkeys_Changed(object sender, RoutedEventArgs e)
     {
         if (_loading) return;
         var app = App.Instance;
+        var previous = app.Settings.GlobalHotkeysEnabled;
         app.Settings.GlobalHotkeysEnabled = GlobalHotkeysBox.IsChecked == true;
-        await app.SaveSettingsAsync();
+        if (!await app.SaveSettingsAsync())
+        {
+            app.Settings.GlobalHotkeysEnabled = previous;
+            _loading = true; GlobalHotkeysBox.IsChecked = previous; _loading = false;
+            app.WindowSizerModule?.ViewModel?.RefreshHotkeyRegistrations();
+            app.Status.Set("Could not save hotkey setting.", StatusKind.Error);
+            return;
+        }
         app.WindowSizerModule?.ViewModel?.RefreshHotkeyRegistrations();
         app.Status.Set(app.Settings.GlobalHotkeysEnabled ? "Global hotkeys enabled." : "Global hotkeys disabled.", StatusKind.Info);
     }
@@ -136,24 +207,57 @@ public partial class SettingsPage : UserControl
     private void ResetData_Click(object sender, RoutedEventArgs e)
     {
         var result = MessageBox.Show(
-            "This permanently deletes all PowerDesk settings, presets, and history.\n\nContinue?",
+            Window.GetWindow(this) ?? App.Instance.Shell!,
+            "This permanently deletes all PowerDesk settings, presets, and history. " +
+            "PowerDesk will restart to load defaults.\n\nContinue?",
             "Reset PowerDesk data",
             MessageBoxButton.YesNo,
             MessageBoxImage.Warning);
         if (result != MessageBoxResult.Yes) return;
+        var app = App.Instance;
         try
         {
+            // Replace in-memory settings with defaults BEFORE deleting files so any subsequent
+            // save (on shutdown, etc.) writes defaults rather than resurrecting old state.
+            app.Settings.Theme = AppTheme.Dark;
+            app.Settings.StartMinimized = false;
+            app.Settings.MinimizeToTrayOnClose = true;
+            app.Settings.GlobalHotkeysEnabled = true;
+            app.Settings.LastPage = "Dashboard";
+            // Run-at-startup is kept in sync with the registry; flip it off explicitly below.
+
+            // Best-effort: also wipe the registry "Run" entry so a reset really is a reset.
+            try
+            {
+                using var key = Registry.CurrentUser.CreateSubKey(RunKey, writable: true);
+                key?.DeleteValue(RunValue, throwOnMissingValue: false);
+            }
+            catch { }
+            app.Settings.RunAtWindowsStartup = false;
+
             // Delete file contents but keep the folder so the running app remains writable.
             foreach (var f in Directory.EnumerateFiles(PathService.Root, "*", SearchOption.AllDirectories))
             {
                 try { File.Delete(f); } catch { }
             }
-            App.Instance.Status.Set("Local data reset. Restart PowerDesk to load defaults.", StatusKind.Warning);
+
+            // Relaunch so every module re-initializes from a clean slate.
+            try
+            {
+                var exe = Process.GetCurrentProcess().MainModule?.FileName;
+                if (!string.IsNullOrEmpty(exe))
+                    Process.Start(new ProcessStartInfo { FileName = exe, UseShellExecute = true });
+            }
+            catch (Exception ex) { app.Logger.Error("Reset relaunch", ex); }
+
+            app.Status.Set("Local data reset. Restarting…", StatusKind.Warning);
+            app.SkipShutdownPersistenceOnce();
+            app.Shell?.ForceClose();
         }
         catch (Exception ex)
         {
-            App.Instance.Logger.Error("Reset data", ex);
-            App.Instance.Status.Set("Reset failed. See logs.", StatusKind.Error);
+            app.Logger.Error("Reset data", ex);
+            app.Status.Set("Reset failed. See logs.", StatusKind.Error);
         }
     }
 
@@ -165,7 +269,7 @@ public partial class SettingsPage : UserControl
             return;
         }
         if (App.Instance.Permissions.TryRelaunchAsAdmin())
-            App.Instance.Shell?.Close();
+            App.Instance.Shell?.ForceClose();
         else
             App.Instance.Status.Set("Elevation cancelled.", StatusKind.Warning);
     }

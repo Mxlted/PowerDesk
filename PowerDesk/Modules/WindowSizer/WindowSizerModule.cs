@@ -16,6 +16,7 @@ public sealed class WindowSizerModule : IPowerDeskModule
     public string DisplayName => "WindowSizer";
     public string Description => "Resize, snap, and pin windows with presets and global hotkeys.";
     public string IconKey => "WindowSizer";
+    public string IconGeometry => "M 3,3 H 21 V 21 H 3 Z M 3,8 H 21 M 8,3 V 21";
     public bool RequiresAdminForFullControl => false;
 
     public WindowSizerViewModel ViewModel { get; }

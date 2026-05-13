@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Data;
 using System.Windows.Media;
 using PowerDesk.Core.Navigation;
 using PowerDesk.Core.Services;
@@ -18,7 +20,9 @@ namespace PowerDesk;
 public partial class MainWindow : Window
 {
     private readonly Dictionary<string, UserControl> _pages = new();
-    private List<ModuleNavItem> _allModuleItems = new();
+    private readonly ObservableCollection<ModuleNavItem> _allModuleItems = new();
+    private ICollectionView? _moduleView;
+    private string _navSearchQuery = string.Empty;
 
     private bool _forceClose;
     public void ForceClose() { _forceClose = true; Close(); }
@@ -27,34 +31,6 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         DataContext = this;
-
-        StateChanged += (_, _) =>
-        {
-            var app = App.Instance;
-            if (WindowState == WindowState.Minimized && app.Settings.MinimizeToTrayOnClose)
-            {
-                Hide();
-                ShowInTaskbar = false;
-            }
-            // Inform WindowSizer it can pause/resume auto-refresh.
-            app.WindowSizerModule?.ViewModel?.OnShellVisibilityChanged(WindowState != WindowState.Minimized && IsVisible);
-        };
-        IsVisibleChanged += (_, _) =>
-        {
-            App.Instance.WindowSizerModule?.ViewModel?.OnShellVisibilityChanged(WindowState != WindowState.Minimized && IsVisible);
-        };
-        Closing += (_, e) =>
-        {
-            var app = App.Instance;
-            if (_forceClose) return;
-            if (app.Settings.MinimizeToTrayOnClose)
-            {
-                e.Cancel = true;
-                Hide();
-                ShowInTaskbar = false;
-                app.Tray?.ShowBalloon("PowerDesk is still running", "Right-click the tray icon to exit.");
-            }
-        };
 
         StateChanged += (_, _) =>
         {
@@ -102,14 +78,21 @@ public partial class MainWindow : Window
         foreach (var m in app.Modules.Modules)
             _pages[m.Id] = m.MainView;
 
-        // Populate sidebar with module nav items
-        _allModuleItems = app.Modules.Modules.Select(m => new ModuleNavItem
+        // Populate sidebar with module nav items. Items live in an ObservableCollection so
+        // filtering through a CollectionView does NOT recreate RadioButton containers — that
+        // would clobber the currently-checked module on every keystroke.
+        foreach (var m in app.Modules.Modules)
         {
-            Id = m.Id,
-            DisplayName = m.DisplayName,
-            IconGeometry = ResolveIconGeometry(m.IconKey),
-        }).ToList();
-        ModuleNavList.ItemsSource = _allModuleItems;
+            _allModuleItems.Add(new ModuleNavItem
+            {
+                Id = m.Id,
+                DisplayName = m.DisplayName,
+                IconGeometry = m.IconGeometry,
+            });
+        }
+        _moduleView = CollectionViewSource.GetDefaultView(_allModuleItems);
+        _moduleView.Filter = ModuleNavFilter;
+        ModuleNavList.ItemsSource = _moduleView;
 
         // Restore last page after the visual tree is built
         Loaded += (_, _) =>
@@ -125,13 +108,16 @@ public partial class MainWindow : Window
     {
         var app = App.Instance;
         StatusText.Text = app.Status.Message;
-        StatusDot.Fill = app.Status.Kind switch
+        var key = app.Status.Kind switch
         {
-            StatusKind.Success => (Brush)FindResource("SuccessBrush"),
-            StatusKind.Warning => (Brush)FindResource("WarningBrush"),
-            StatusKind.Error   => (Brush)FindResource("DangerBrush"),
-            _                  => (Brush)FindResource("InfoBrush"),
+            StatusKind.Success => "SuccessBrush",
+            StatusKind.Warning => "WarningBrush",
+            StatusKind.Error   => "DangerBrush",
+            _                  => "InfoBrush",
         };
+        // TryFindResource so a future theme that forgets a key won't crash the shell.
+        StatusDot.Fill = TryFindResource(key) as Brush
+            ?? System.Windows.Media.Brushes.Gray;
     }
 
     private void Nav_Checked(object sender, RoutedEventArgs e)
@@ -148,6 +134,7 @@ public partial class MainWindow : Window
 
     private void SelectNav(string id)
     {
+        if (!_pages.ContainsKey(id)) id = "Dashboard";
         RadioButton? target = id switch
         {
             "Dashboard" => NavDashboard,
@@ -155,11 +142,30 @@ public partial class MainWindow : Window
             "About"     => NavAbout,
             _ => FindModuleNavButton(id),
         };
-        if (target is null) target = NavDashboard;
+        if (target is null)
+        {
+            if (id is not ("Dashboard" or "Settings" or "About") && !string.IsNullOrEmpty(_navSearchQuery))
+            {
+                _navSearchQuery = string.Empty;
+                SearchBox.Text = string.Empty;
+                _moduleView?.Refresh();
+            }
+            ModuleNavList.ApplyTemplate();
+            ModuleNavList.UpdateLayout();
+            target = FindModuleNavButton(id);
+        }
+        if (target is null)
+        {
+            id = "Dashboard";
+            target = NavDashboard;
+        }
         target.IsChecked = true;
         // Fire the handler manually if the radio was already checked
         if (_pages.TryGetValue(id, out var page))
+        {
             ContentHost.Content = page;
+            App.Instance.Settings.LastPage = id;
+        }
     }
 
     private RadioButton? FindModuleNavButton(string id)
@@ -170,25 +176,18 @@ public partial class MainWindow : Window
 
     private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
     {
-        var q = (sender as TextBox)?.Text?.Trim() ?? string.Empty;
-        if (q.Length == 0)
-        {
-            ModuleNavList.ItemsSource = _allModuleItems;
-            return;
-        }
-        ModuleNavList.ItemsSource = _allModuleItems
-            .Where(m => m.DisplayName.Contains(q, StringComparison.OrdinalIgnoreCase))
-            .ToList();
+        _navSearchQuery = (sender as TextBox)?.Text?.Trim() ?? string.Empty;
+        _moduleView?.Refresh();
+    }
+
+    private bool ModuleNavFilter(object obj)
+    {
+        if (string.IsNullOrEmpty(_navSearchQuery)) return true;
+        if (obj is not ModuleNavItem m) return false;
+        return m.DisplayName.IndexOf(_navSearchQuery, StringComparison.OrdinalIgnoreCase) >= 0;
     }
 
     public void NavigateTo(string id) => SelectNav(id);
-
-    private static string ResolveIconGeometry(string key) => key switch
-    {
-        "WindowSizer"  => "M 3,3 H 21 V 21 H 3 Z M 3,8 H 21 M 8,3 V 21",
-        "StartupPilot" => "M 12,2 L 5,12 H 10 V 22 L 19,10 H 13 Z",
-        _              => "M 4,4 H 20 V 20 H 4 Z",
-    };
 
     private static IEnumerable<T> FindVisualChildren<T>(DependencyObject depObj) where T : DependencyObject
     {

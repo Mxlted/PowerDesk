@@ -6,6 +6,7 @@ public enum StatusKind { Info, Success, Warning, Error }
 
 /// <summary>
 /// Single status banner surface shared by the whole shell. Modules write here; the shell's status bar binds.
+/// Writes are marshalled to the UI thread so background callers (scanner continuations, etc.) can use Set freely.
 /// </summary>
 public sealed partial class StatusService : ObservableObject
 {
@@ -14,7 +15,10 @@ public sealed partial class StatusService : ObservableObject
 
     public void Set(string message, StatusKind kind = StatusKind.Info)
     {
-        Message = message;
-        Kind = kind;
+        UiDispatcher.Invoke(() =>
+        {
+            Message = message;
+            Kind = kind;
+        });
     }
 }

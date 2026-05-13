@@ -17,6 +17,8 @@
             <conv:StringEqualsToBoolConverter x:Key="StringEqualsToBool"/>
             <conv:StringEqualsConverter x:Key="StringEquals"/>
             <conv:InverseBoolConverter x:Key="InverseBool"/>
+            <conv:ImpactToBrushConverter x:Key="ImpactToBrush"/>
+            <conv:ImpactToSoftBrushConverter x:Key="ImpactToSoftBrush"/>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

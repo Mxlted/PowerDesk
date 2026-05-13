@@ -25,6 +25,7 @@ public partial class App : Application
     public StatusService Status { get; } = new();
     public RecentActionsService RecentActions { get; } = new();
     public IconService Icons { get; private set; } = null!;
+    public IConfirmationService Confirm { get; } = new ConfirmationService();
     public ModuleRegistry Modules { get; } = new();
     public AppSettings Settings { get; private set; } = new();
     public TrayIconService Tray { get; private set; } = null!;
@@ -33,6 +34,7 @@ public partial class App : Application
     public StartupPilotModule? StartupPilotModule { get; private set; }
 
     public MainWindow? Shell { get; private set; }
+    private bool _skipShutdownPersistence;
 
     protected override async void OnStartup(StartupEventArgs e)
     {
@@ -64,7 +66,7 @@ public partial class App : Application
 
         // Register feature modules. Add more here as the hub grows.
         WindowSizerModule = new WindowSizerModule(Logger, Storage, Status, RecentActions, Icons, Settings);
-        StartupPilotModule = new StartupPilotModule(Logger, Storage, Status, RecentActions, Icons, Permissions);
+        StartupPilotModule = new StartupPilotModule(Logger, Storage, Status, RecentActions, Icons, Permissions, Confirm);
         Modules.Register(WindowSizerModule);
         Modules.Register(StartupPilotModule);
 
@@ -77,11 +79,18 @@ public partial class App : Application
         Shell = new MainWindow();
         Shell.Closed += async (_, _) =>
         {
-            foreach (var m in Modules.Modules)
+            if (!_skipShutdownPersistence)
             {
-                try { await m.ShutdownAsync(); } catch (Exception ex) { Logger.Error($"Module shutdown: {m.Id}", ex); }
+                foreach (var m in Modules.Modules)
+                {
+                    try { await m.ShutdownAsync(); } catch (Exception ex) { Logger.Error($"Module shutdown: {m.Id}", ex); }
+                }
+                await Storage.SaveAsync(Core.Services.PathService.SettingsFile, Settings);
             }
-            await Storage.SaveAsync(Core.Services.PathService.SettingsFile, Settings);
+            else
+            {
+                Logger.Info("PowerDesk shutdown persistence skipped.");
+            }
             Tray?.Dispose();
             Logger.Info("PowerDesk exited.");
             Shutdown();
@@ -122,6 +131,8 @@ public partial class App : Application
         Shell.Topmost = false;
     }
 
-    public async Task SaveSettingsAsync()
+    public void SkipShutdownPersistenceOnce() => _skipShutdownPersistence = true;
+
+    public async Task<bool> SaveSettingsAsync()
         => await Storage.SaveAsync(Core.Services.PathService.SettingsFile, Settings);
 }

@@ -37,11 +37,12 @@ public sealed class WindowService
                 if (string.IsNullOrWhiteSpace(title)) return true;
 
                 GetWindowThreadProcessId(hWnd, out var pid);
+                if (pid == Environment.ProcessId) return true;
                 string proc = "";
                 string exe  = "";
                 try
                 {
-                    var p = Process.GetProcessById(pid);
+                    using var p = Process.GetProcessById(pid);
                     proc = p.ProcessName;
                     try { exe = p.MainModule?.FileName ?? string.Empty; } catch { }
                 }
@@ -82,6 +83,7 @@ public sealed class WindowService
     {
         if (hWnd == IntPtr.Zero) return false;
         if (hWnd == selfHwnd) return false;
+        if (!IsWindow(hWnd)) return false;
         if (!IsWindowVisible(hWnd)) return false;
 
         var ex = GetWindowLong(hWnd, GWL_EXSTYLE);
@@ -91,6 +93,21 @@ public sealed class WindowService
         if (owner != IntPtr.Zero && (ex & WS_EX_APPWINDOW) == 0) return false;
 
         return true;
+    }
+
+    public bool CanManageWindow(IntPtr hWnd, IntPtr selfHwnd)
+    {
+        try
+        {
+            if (!IsRelevantWindow(hWnd, selfHwnd)) return false;
+            if (GetWindowTextLength(hWnd) <= 0) return false;
+            GetWindowThreadProcessId(hWnd, out var pid);
+            return pid != Environment.ProcessId;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     public void MoveAndResize(IntPtr hWnd, int x, int y, int w, int h)

@@ -11,14 +11,16 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyName>PowerDesk</AssemblyName>
     <RootNamespace>PowerDesk</RootNamespace>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
+    <AssemblyVersion>0.2.0.0</AssemblyVersion>
+    <FileVersion>0.2.0.0</FileVersion>
+    <InformationalVersion>0.2.0</InformationalVersion>
     <Company>PowerDesk</Company>
     <Product>PowerDesk</Product>
     <Description>Modular PC tool hub for Windows.</Description>
     <Copyright>© PowerDesk</Copyright>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
-    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <PublishSingleFile>false</PublishSingleFile>
     <SelfContained>false</SelfContained>
