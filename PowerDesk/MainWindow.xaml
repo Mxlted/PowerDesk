@@ -5,6 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         Title="PowerDesk" Height="900" Width="1600"
         MinWidth="1120" MinHeight="680"
+        Icon="Assets/Brand/PowerDesk.ico"
         Background="{DynamicResource SurfaceBaseBrush}"
         Foreground="{DynamicResource TextPrimaryBrush}"
         FontFamily="{StaticResource AppFont}"
@@ -28,10 +29,11 @@
                 <!-- Brand -->
                 <Border DockPanel.Dock="Top" Padding="20,18,20,12">
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                        <Border Width="28" Height="28" Background="{DynamicResource AccentBrush}" CornerRadius="6">
-                            <TextBlock Text="P" Foreground="{DynamicResource OnAccentBrush}" FontWeight="Bold"
-                                       HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="15"/>
-                        </Border>
+                        <Image Width="30" Height="30"
+                               Source="/Assets/Brand/PowerDesk.png"
+                               Stretch="Uniform"
+                               RenderOptions.BitmapScalingMode="HighQuality"
+                               AutomationProperties.Name="PowerDesk logo"/>
                         <TextBlock Text="PowerDesk" Margin="10,0,0,0" VerticalAlignment="Center"
                                    FontSize="16" FontWeight="SemiBold"
                                    Foreground="{DynamicResource TextPrimaryBrush}"/>

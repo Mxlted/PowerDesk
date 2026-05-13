@@ -5,9 +5,18 @@
              Foreground="{DynamicResource TextPrimaryBrush}">
     <ScrollViewer Padding="32,24">
         <StackPanel MaxWidth="780">
-            <TextBlock Style="{StaticResource TextDisplay}" Text="About PowerDesk"/>
-            <TextBlock Style="{StaticResource TextCaption}" Margin="0,4,0,24"
-                       Text="A modular, local-first PC tool hub for power users."/>
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,24">
+                <Image Width="64" Height="64"
+                       Source="/Assets/Brand/PowerDesk.png"
+                       Stretch="Uniform"
+                       RenderOptions.BitmapScalingMode="HighQuality"
+                       AutomationProperties.Name="PowerDesk logo"/>
+                <StackPanel Margin="16,0,0,0" VerticalAlignment="Center">
+                    <TextBlock Style="{StaticResource TextDisplay}" Text="About PowerDesk"/>
+                    <TextBlock Style="{StaticResource TextCaption}" Margin="0,4,0,0"
+                               Text="A modular, local-first PC tool hub for power users."/>
+                </StackPanel>
+            </StackPanel>
 
             <Border Style="{StaticResource Card}" Margin="0,0,0,16">
                 <StackPanel>
