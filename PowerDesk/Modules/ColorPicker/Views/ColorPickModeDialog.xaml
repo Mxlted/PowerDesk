@@ -1,0 +1,65 @@
+<Window x:Class="PowerDesk.Modules.ColorPicker.Views.ColorPickModeDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Pick screen color"
+        Width="460"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        WindowStyle="None"
+        ResizeMode="NoResize"
+        AllowsTransparency="True"
+        Background="Transparent"
+        ShowInTaskbar="False"
+        Foreground="{DynamicResource TextPrimaryBrush}"
+        FontFamily="{StaticResource AppFont}"
+        FontSize="{StaticResource FontSizeBody}">
+    <Border Background="{DynamicResource SurfaceRaisedBrush}"
+            BorderBrush="{DynamicResource BorderBrush}"
+            BorderThickness="1"
+            CornerRadius="8"
+            Padding="22"
+            SnapsToDevicePixels="True">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <TextBlock Grid.Row="0"
+                       Text="Pick Screen Color"
+                       Style="{StaticResource TextSubtitle}"/>
+
+            <TextBlock Grid.Row="1"
+                       Margin="0,10,0,20"
+                       TextWrapping="Wrap"
+                       Foreground="{DynamicResource TextSecondaryBrush}"
+                       Text="PowerDesk can minimize before picking so it does not cover the color you want."/>
+
+            <Grid Grid.Row="2">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <Button Grid.Column="1"
+                        Content="Cancel"
+                        MinWidth="84"
+                        Click="Cancel_Click"/>
+                <Button Grid.Column="2"
+                        Content="Keep visible"
+                        MinWidth="104"
+                        Margin="8,0,0,0"
+                        Click="KeepVisible_Click"/>
+                <Button Grid.Column="3"
+                        Content="Minimize"
+                        MinWidth="96"
+                        Margin="8,0,0,0"
+                        Style="{StaticResource PrimaryButton}"
+                        Click="Minimize_Click"/>
+            </Grid>
+        </Grid>
+    </Border>
+</Window>

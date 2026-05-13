@@ -1,0 +1,100 @@
+<UserControl x:Class="PowerDesk.Modules.DnsDesk.Views.DnsDeskView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="{DynamicResource SurfaceBaseBrush}"
+             Foreground="{DynamicResource TextPrimaryBrush}">
+    <Grid Margin="32,24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <DockPanel Grid.Row="0">
+            <StackPanel DockPanel.Dock="Left">
+                <TextBlock Style="{StaticResource TextDisplay}" Text="DnsDesk"/>
+                <TextBlock Style="{StaticResource TextCaption}" Margin="0,4,0,0"
+                           Text="View adapters, switch DNS profiles, and flush the resolver cache."/>
+            </StackPanel>
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                <Button Content="Flush DNS" Command="{Binding FlushDnsCommand}"/>
+                <Button Content="Relaunch as administrator" Margin="8,0,0,0"
+                        Command="{Binding RelaunchAsAdminCommand}"
+                        Visibility="{Binding IsAdmin, Converter={StaticResource InverseBoolToVis}}"/>
+                <Button Content="Refresh" Margin="8,0,0,0" Style="{StaticResource PrimaryButton}" Command="{Binding RefreshCommand}"/>
+            </StackPanel>
+        </DockPanel>
+
+        <WrapPanel Grid.Row="1" Margin="0,16,0,16">
+            <Border Style="{StaticResource Card}" Width="180" Margin="0,0,12,12">
+                <StackPanel>
+                    <TextBlock Text="Adapters" Style="{StaticResource TextCaption}"/>
+                    <TextBlock Text="{Binding AdapterCount}" Style="{StaticResource TextTitle}"/>
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource Card}" Width="180" Margin="0,0,12,12">
+                <StackPanel>
+                    <TextBlock Text="Online" Style="{StaticResource TextCaption}"/>
+                    <TextBlock Text="{Binding OnlineCount}" Style="{StaticResource TextTitle}" Foreground="{DynamicResource SuccessBrush}"/>
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource Card}" Width="220" Margin="0,0,12,12">
+                <StackPanel>
+                    <TextBlock Text="Last refresh" Style="{StaticResource TextCaption}"/>
+                    <TextBlock Text="{Binding LastRefresh, StringFormat={}{0:HH:mm:ss}}" Style="{StaticResource TextTitle}" FontSize="16"/>
+                </StackPanel>
+            </Border>
+        </WrapPanel>
+
+        <Grid Grid.Row="2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="360"/>
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Column="0" Style="{StaticResource Card}" Padding="0">
+                <DataGrid ItemsSource="{Binding Adapters}" SelectedItem="{Binding SelectedAdapter}" IsReadOnly="True">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Adapter" Binding="{Binding Name}" Width="180"/>
+                        <DataGridTextColumn Header="Status" Binding="{Binding StatusLabel}" Width="90"/>
+                        <DataGridTextColumn Header="Type" Binding="{Binding TypeLabel}" Width="130"/>
+                        <DataGridTextColumn Header="IPv4 DNS" Binding="{Binding Ipv4DnsServers}" Width="220"/>
+                        <DataGridTextColumn Header="IPv6 DNS" Binding="{Binding Ipv6DnsServers}" Width="260"/>
+                        <DataGridTextColumn Header="IPv6" Binding="{Binding Ipv6StatusLabel}" Width="110"/>
+                        <DataGridTextColumn Header="Gateways" Binding="{Binding GatewayAddresses}" Width="220"/>
+                    </DataGrid.Columns>
+                </DataGrid>
+            </Border>
+
+            <Border Grid.Column="1" Margin="16,0,0,0">
+                <StackPanel>
+                    <TextBlock Text="Profile" Style="{StaticResource TextSubtitle}"/>
+                    <ComboBox ItemsSource="{Binding Profiles}" SelectedItem="{Binding SelectedProfile}" Margin="0,10,0,0"/>
+                    <TextBlock Text="{Binding SelectedProfile.ServerLabel}" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,8,0,0" TextWrapping="Wrap"/>
+                    <Button Content="Apply to selected adapter" Style="{StaticResource PrimaryButton}" Margin="0,14,0,0"
+                            Command="{Binding ApplyProfileCommand}"/>
+
+                    <Border Background="{DynamicResource DividerBrush}" Height="1" Margin="0,18"/>
+
+                    <Grid Visibility="{Binding SelectedAdapter, Converter={StaticResource NullToVis}, ConverterParameter=invert}">
+                        <TextBlock Text="No adapter selected" Style="{StaticResource TextSubtitle}" Foreground="{DynamicResource TextSecondaryBrush}"
+                                   HorizontalAlignment="Center" Margin="0,30,0,0"/>
+                    </Grid>
+
+                    <StackPanel DataContext="{Binding SelectedAdapter}" Visibility="{Binding SelectedAdapter, Converter={StaticResource NullToVis}}">
+                        <TextBlock Text="{Binding Name}" Style="{StaticResource TextSubtitle}"/>
+                        <TextBlock Text="{Binding Description}" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                        <TextBlock Text="IPv4 DNS" Style="{StaticResource TextCaption}" Margin="0,14,0,0"/>
+                        <TextBlock Text="{Binding Ipv4DnsServers}" FontFamily="Consolas" TextWrapping="Wrap"/>
+                        <TextBlock Text="IPv6 DNS" Style="{StaticResource TextCaption}" Margin="0,14,0,0"/>
+                        <TextBlock Text="{Binding Ipv6DnsServers}" FontFamily="Consolas" TextWrapping="Wrap"/>
+                        <TextBlock Text="IPv6 status" Style="{StaticResource TextCaption}" Margin="0,14,0,0"/>
+                        <TextBlock Text="{Binding Ipv6StatusLabel}"/>
+                        <TextBlock Text="Gateway" Style="{StaticResource TextCaption}" Margin="0,14,0,0"/>
+                        <TextBlock Text="{Binding GatewayAddresses}" FontFamily="Consolas" TextWrapping="Wrap"/>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </Grid>
+    </Grid>
+</UserControl>

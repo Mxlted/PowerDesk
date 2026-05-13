@@ -3,10 +3,13 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Media;
+using System.Windows.Interop;
+using PowerDesk.Core.Models;
 using PowerDesk.Core.Navigation;
 using PowerDesk.Core.Services;
 using PowerDesk.Views;
@@ -14,6 +17,7 @@ using UserControl = System.Windows.Controls.UserControl;
 using RadioButton = System.Windows.Controls.RadioButton;
 using TextBox = System.Windows.Controls.TextBox;
 using Brush = System.Windows.Media.Brush;
+using MediaColor = System.Windows.Media.Color;
 
 namespace PowerDesk;
 
@@ -31,6 +35,9 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         DataContext = this;
+
+        SourceInitialized += (_, _) => ApplyNativeTitleBarTheme();
+        App.Instance.ThemeService.ThemeChanged += (_, _) => ApplyNativeTitleBarTheme();
 
         StateChanged += (_, _) =>
         {
@@ -189,6 +196,45 @@ public partial class MainWindow : Window
 
     public void NavigateTo(string id) => SelectNav(id);
 
+    private void ApplyNativeTitleBarTheme()
+    {
+        try
+        {
+            var hwnd = new WindowInteropHelper(this).Handle;
+            if (hwnd == IntPtr.Zero) return;
+
+            var dark = App.Instance.ThemeService.Current != AppTheme.Light;
+            var useDark = dark ? 1 : 0;
+            _ = DwmSetWindowAttribute(hwnd, DwmwaUseImmersiveDarkMode, ref useDark, sizeof(int));
+            _ = DwmSetWindowAttribute(hwnd, DwmwaUseImmersiveDarkModeBefore20H1, ref useDark, sizeof(int));
+
+            if (TryFindResource("SurfaceColor") is MediaColor captionColor)
+            {
+                var caption = ToColorRef(captionColor);
+                _ = DwmSetWindowAttribute(hwnd, DwmwaCaptionColor, ref caption, sizeof(int));
+            }
+
+            if (TryFindResource("TextPrimaryColor") is MediaColor textColor)
+            {
+                var text = ToColorRef(textColor);
+                _ = DwmSetWindowAttribute(hwnd, DwmwaTextColor, ref text, sizeof(int));
+            }
+
+            if (TryFindResource("DividerColor") is MediaColor borderColor)
+            {
+                var border = ToColorRef(borderColor);
+                _ = DwmSetWindowAttribute(hwnd, DwmwaBorderColor, ref border, sizeof(int));
+            }
+        }
+        catch
+        {
+            // Native caption theming is best-effort and should never block the shell.
+        }
+    }
+
+    private static int ToColorRef(MediaColor color)
+        => color.R | (color.G << 8) | (color.B << 16);
+
     private static IEnumerable<T> FindVisualChildren<T>(DependencyObject depObj) where T : DependencyObject
     {
         if (depObj is null) yield break;
@@ -199,6 +245,15 @@ public partial class MainWindow : Window
             foreach (var c in FindVisualChildren<T>(child)) yield return c;
         }
     }
+
+    private const int DwmwaUseImmersiveDarkModeBefore20H1 = 19;
+    private const int DwmwaUseImmersiveDarkMode = 20;
+    private const int DwmwaBorderColor = 34;
+    private const int DwmwaCaptionColor = 35;
+    private const int DwmwaTextColor = 36;
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
 }
 
 public sealed class ModuleNavItem

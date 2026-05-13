@@ -1,0 +1,76 @@
+<UserControl x:Class="PowerDesk.Modules.ColorPicker.Views.ColorPickerView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="{DynamicResource SurfaceBaseBrush}"
+             Foreground="{DynamicResource TextPrimaryBrush}">
+    <Grid Margin="32,24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <DockPanel Grid.Row="0">
+            <StackPanel DockPanel.Dock="Left">
+                <TextBlock Style="{StaticResource TextDisplay}" Text="ColorPicker"/>
+                <TextBlock Style="{StaticResource TextCaption}" Margin="0,4,0,0"
+                           Text="Pick, sample, convert, and copy colors."/>
+            </StackPanel>
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                <Button Content="Dialog" Command="{Binding OpenColorDialogCommand}"/>
+                <Button Content="Pick screen" Margin="8,0,0,0" Style="{StaticResource PrimaryButton}" Click="PickScreen_Click"/>
+            </StackPanel>
+        </DockPanel>
+
+        <Grid Grid.Row="1" Margin="0,18,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="420"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Column="0" Background="{Binding SwatchBrush}" BorderBrush="{DynamicResource BorderBrush}"
+                    BorderThickness="1" CornerRadius="8" MinHeight="420"/>
+
+            <Border Grid.Column="1" Margin="24,0,0,0">
+                <StackPanel MaxWidth="520" HorizontalAlignment="Left">
+                    <TextBlock Text="Values" Style="{StaticResource TextSubtitle}"/>
+                    <TextBlock Text="HEX" Style="{StaticResource TextCaption}" Margin="0,14,0,4"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBox Grid.Column="0" Text="{Binding Hex, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas"/>
+                        <Button Grid.Column="1" Content="Copy" Margin="8,0,0,0" Command="{Binding CopyHexCommand}"/>
+                    </Grid>
+
+                    <TextBlock Text="RGB channels" Style="{StaticResource TextCaption}" Margin="0,14,0,4"/>
+                    <UniformGrid Columns="3">
+                        <TextBox Text="{Binding Red, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,6,0"/>
+                        <TextBox Text="{Binding Green, UpdateSourceTrigger=PropertyChanged}" Margin="3,0,3,0"/>
+                        <TextBox Text="{Binding Blue, UpdateSourceTrigger=PropertyChanged}" Margin="6,0,0,0"/>
+                    </UniformGrid>
+
+                    <TextBlock Text="RGB" Style="{StaticResource TextCaption}" Margin="0,14,0,4"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBox Grid.Column="0" Text="{Binding Rgb}" IsReadOnly="True" FontFamily="Consolas"/>
+                        <Button Grid.Column="1" Content="Copy" Margin="8,0,0,0" Command="{Binding CopyRgbCommand}"/>
+                    </Grid>
+
+                    <TextBlock Text="HSL" Style="{StaticResource TextCaption}" Margin="0,14,0,4"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBox Grid.Column="0" Text="{Binding Hsl}" IsReadOnly="True" FontFamily="Consolas"/>
+                        <Button Grid.Column="1" Content="Copy" Margin="8,0,0,0" Command="{Binding CopyHslCommand}"/>
+                    </Grid>
+                </StackPanel>
+            </Border>
+        </Grid>
+    </Grid>
+</UserControl>

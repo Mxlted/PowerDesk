@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Threading.Tasks;
 using System.Windows;
 using PowerDesk.Core.Logging;
@@ -8,9 +9,19 @@ using PowerDesk.Core.Permissions;
 using PowerDesk.Core.Services;
 using PowerDesk.Core.Storage;
 using PowerDesk.Core.Theming;
+using PowerDesk.Modules.ColorPicker;
+using PowerDesk.Modules.DnsDesk;
+using PowerDesk.Modules.FileLockFinder;
+using PowerDesk.Modules.HashDesk;
+using PowerDesk.Modules.HostProfiles;
+using PowerDesk.Modules.MonitorDesk;
+using PowerDesk.Modules.PathEditor;
 using PowerDesk.Modules.StartupPilot;
 using PowerDesk.Modules.WindowSizer;
 using Application = System.Windows.Application;
+using MessageBox = System.Windows.MessageBox;
+using MessageBoxButton = System.Windows.MessageBoxButton;
+using MessageBoxImage = System.Windows.MessageBoxImage;
 
 namespace PowerDesk;
 
@@ -35,9 +46,21 @@ public partial class App : Application
 
     public MainWindow? Shell { get; private set; }
     private bool _skipShutdownPersistence;
+    private FileStream? _singleInstanceLock;
 
     protected override async void OnStartup(StartupEventArgs e)
     {
+        if (!TryAcquireSingleInstanceLock())
+        {
+            MessageBox.Show(
+                "PowerDesk is already running. Use the existing window or tray icon.",
+                "PowerDesk",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            Shutdown();
+            return;
+        }
+
         base.OnStartup(e);
 
         DispatcherUnhandledException += (_, args) =>
@@ -69,6 +92,13 @@ public partial class App : Application
         StartupPilotModule = new StartupPilotModule(Logger, Storage, Status, RecentActions, Icons, Permissions, Confirm);
         Modules.Register(WindowSizerModule);
         Modules.Register(StartupPilotModule);
+        Modules.Register(new MonitorDeskModule(Logger, Storage, Status, RecentActions));
+        Modules.Register(new DnsDeskModule(Logger, Status, RecentActions, Permissions));
+        Modules.Register(new HashDeskModule(Logger, Status, RecentActions));
+        Modules.Register(new HostProfilesModule(Logger, Storage, Status, RecentActions, Permissions, Confirm));
+        Modules.Register(new ColorPickerModule(Logger, Status));
+        Modules.Register(new FileLockFinderModule(Logger, Status, RecentActions, Permissions, Confirm));
+        Modules.Register(new PathEditorModule(Logger, Storage, Status, RecentActions, Permissions, Confirm));
 
         foreach (var m in Modules.Modules)
         {
@@ -135,4 +165,34 @@ public partial class App : Application
 
     public async Task<bool> SaveSettingsAsync()
         => await Storage.SaveAsync(Core.Services.PathService.SettingsFile, Settings);
+
+    protected override void OnExit(ExitEventArgs e)
+    {
+        _singleInstanceLock?.Dispose();
+        _singleInstanceLock = null;
+        base.OnExit(e);
+    }
+
+    private bool TryAcquireSingleInstanceLock()
+    {
+        try
+        {
+            var lockPath = Path.Combine(Core.Services.PathService.Root, "PowerDesk.instance.lock");
+            _singleInstanceLock = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            _singleInstanceLock.SetLength(0);
+            using var writer = new StreamWriter(_singleInstanceLock, leaveOpen: true);
+            writer.Write(Environment.ProcessId);
+            writer.Flush();
+            _singleInstanceLock.Position = 0;
+            return true;
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
 }
