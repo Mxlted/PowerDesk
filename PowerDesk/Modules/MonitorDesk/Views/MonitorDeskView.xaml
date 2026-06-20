@@ -15,7 +15,7 @@
             <StackPanel DockPanel.Dock="Left">
                 <TextBlock Style="{StaticResource TextDisplay}" Text="MonitorDesk"/>
                 <TextBlock Style="{StaticResource TextCaption}" Margin="0,4,0,0"
-                           Text="Display bounds, work areas, and monitor layout."/>
+                           Text="Display bounds, work areas, and numbered monitor layouts."/>
             </StackPanel>
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
                 <Button Content="Display settings" Command="{Binding OpenDisplaySettingsCommand}"/>
@@ -88,7 +88,8 @@
             <Border Grid.Column="0" Style="{StaticResource Card}" Padding="0">
                 <DataGrid ItemsSource="{Binding Monitors}" SelectedItem="{Binding SelectedMonitor}" IsReadOnly="True">
                     <DataGrid.Columns>
-                        <DataGridTextColumn Header="Monitor" Binding="{Binding DeviceName}" Width="*"/>
+                        <DataGridTextColumn Header="Monitor" Binding="{Binding DisplayLabel}" Width="110"/>
+                        <DataGridTextColumn Header="Device" Binding="{Binding DeviceName}" Width="*"/>
                         <DataGridTextColumn Header="Role" Binding="{Binding PrimaryLabel}" Width="110"/>
                         <DataGridTextColumn Header="Bounds" Binding="{Binding BoundsLabel}" Width="180"/>
                         <DataGridTextColumn Header="Work area" Binding="{Binding WorkAreaLabel}" Width="180"/>
@@ -106,7 +107,8 @@
 
                     <StackPanel Visibility="{Binding SelectedMonitor, Converter={StaticResource NullToVis}}"
                                 DataContext="{Binding SelectedMonitor}">
-                        <TextBlock Text="{Binding DeviceName}" Style="{StaticResource TextSubtitle}"/>
+                        <TextBlock Text="{Binding DisplayLabel}" Style="{StaticResource TextSubtitle}"/>
+                        <TextBlock Text="{Binding DeviceName}" FontFamily="Consolas" Foreground="{DynamicResource TextSecondaryBrush}"/>
                         <TextBlock Text="{Binding PrimaryLabel}" Foreground="{DynamicResource AccentBrush}" FontWeight="SemiBold"/>
                         <Border Background="{DynamicResource DividerBrush}" Height="1" Margin="0,14"/>
                         <TextBlock Text="Bounds" Style="{StaticResource TextCaption}"/>

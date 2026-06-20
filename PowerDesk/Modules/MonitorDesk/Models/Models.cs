@@ -2,6 +2,7 @@ namespace PowerDesk.Modules.MonitorDesk.Models;
 
 public sealed class MonitorInfo
 {
+    public int DisplayNumber { get; init; }
     public string DeviceName { get; init; } = string.Empty;
     public bool IsPrimary { get; init; }
     public int X { get; init; }
@@ -14,6 +15,7 @@ public sealed class MonitorInfo
     public int WorkHeight { get; init; }
     public int BitsPerPixel { get; init; }
 
+    public string DisplayLabel => $"Monitor {DisplayNumber}";
     public string PrimaryLabel => IsPrimary ? "Primary" : "Secondary";
     public string BoundsLabel => $"{Width} x {Height} @ {X},{Y}";
     public string WorkAreaLabel => $"{WorkWidth} x {WorkHeight} @ {WorkX},{WorkY}";
@@ -30,13 +32,14 @@ public sealed class MonitorLayoutPreset
     public string DisplayCountLabel => $"{DisplayCount} display{(DisplayCount == 1 ? string.Empty : "s")}";
     public string Summary => Displays.Count == 0
         ? "No displays"
-        : string.Join("; ", Displays.Select(d => $"{d.DeviceName} {d.BoundsLabel}"));
+        : string.Join("; ", Displays.Select((d, i) => $"{d.DisplayLabelOrFallback(i + 1)} {d.BoundsLabel}"));
 
     public override string ToString() => string.IsNullOrWhiteSpace(Name) ? "Unnamed layout" : Name;
 }
 
 public sealed class MonitorLayoutDisplay
 {
+    public int DisplayNumber { get; set; }
     public string DeviceName { get; set; } = string.Empty;
     public bool IsPrimary { get; set; }
     public int X { get; set; }
@@ -46,6 +49,9 @@ public sealed class MonitorLayoutDisplay
 
     public string PrimaryLabel => IsPrimary ? "Primary" : "Secondary";
     public string BoundsLabel => $"{Width} x {Height} @ {X},{Y}";
+
+    public string DisplayLabelOrFallback(int fallbackNumber)
+        => $"Monitor {(DisplayNumber > 0 ? DisplayNumber : fallbackNumber)}";
 }
 
 public sealed class MonitorDeskSettings

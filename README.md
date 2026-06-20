@@ -2,7 +2,7 @@
 
 A modular, local-first PC tool hub for Windows - inspired by Microsoft PowerToys, designed to grow one tool at a time.
 
-Current beta release: **v0.3.0**.
+Current beta release: **v0.3.1**.
 
 PowerDesk currently includes these built-in tools:
 
@@ -71,20 +71,20 @@ PowerDesk starts unelevated. If you change something that needs administrator ri
 
 Requires the [.NET 9 SDK](https://dotnet.microsoft.com/).
 
-```
+```powershell
 git clone https://github.com/Mxlted/PowerDesk.git
-cd PowerDesk/PowerDesk
-dotnet run
+cd PowerDesk
+dotnet run --project .\PowerDesk\PowerDesk.csproj
 ```
 
 Build a single-file self-contained release:
 
-```
-dotnet publish PowerDesk.csproj -c Release -r win-x64 --self-contained ^
-  -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o "../publish"
+```powershell
+dotnet publish .\PowerDesk\PowerDesk.csproj -c Release -r win-x64 --self-contained `
+  -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o ".\publish"
 ```
 
-The output is `../publish/PowerDesk.exe`.
+The output is `.\publish\PowerDesk.exe`.
 
 ---
 

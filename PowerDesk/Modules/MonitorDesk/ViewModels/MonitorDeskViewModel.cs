@@ -57,7 +57,10 @@ public sealed partial class MonitorDeskViewModel : ObservableObject
         _settings = await _storage.LoadAsync(_settingsPath, () => new MonitorDeskSettings());
         LayoutPresets.Clear();
         foreach (var preset in _settings.LayoutPresets)
+        {
+            NormalizeDisplayNumbers(preset);
             LayoutPresets.Add(preset);
+        }
         SelectedLayout = LayoutPresets.FirstOrDefault();
         Refresh();
         RaiseLayoutCounts();
@@ -70,12 +73,21 @@ public sealed partial class MonitorDeskViewModel : ObservableObject
     {
         try
         {
-            var selected = SelectedMonitor?.DeviceName;
+            var selectedDevice = SelectedMonitor?.DeviceName;
+            var selectedNumber = SelectedMonitor?.DisplayNumber;
             Monitors.Clear();
-            foreach (var screen in Screen.AllScreens.OrderByDescending(s => s.Primary).ThenBy(s => s.Bounds.X))
+            var screens = Screen.AllScreens
+                .OrderByDescending(s => s.Primary)
+                .ThenBy(s => s.Bounds.X)
+                .ThenBy(s => s.DeviceName, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            for (var i = 0; i < screens.Count; i++)
             {
+                var screen = screens[i];
                 Monitors.Add(new MonitorInfo
                 {
+                    DisplayNumber = i + 1,
                     DeviceName = screen.DeviceName,
                     IsPrimary = screen.Primary,
                     X = screen.Bounds.X,
@@ -89,7 +101,8 @@ public sealed partial class MonitorDeskViewModel : ObservableObject
                     BitsPerPixel = screen.BitsPerPixel,
                 });
             }
-            SelectedMonitor = Monitors.FirstOrDefault(m => string.Equals(m.DeviceName, selected, StringComparison.OrdinalIgnoreCase))
+            SelectedMonitor = Monitors.FirstOrDefault(m => m.DisplayNumber == selectedNumber)
+                ?? Monitors.FirstOrDefault(m => string.Equals(m.DeviceName, selectedDevice, StringComparison.OrdinalIgnoreCase))
                 ?? Monitors.FirstOrDefault();
             LastRefresh = DateTime.Now;
             RaiseCounts();
@@ -127,7 +140,7 @@ public sealed partial class MonitorDeskViewModel : ObservableObject
     {
         try
         {
-            var lines = Monitors.Select(m => $"{m.DeviceName} | {m.PrimaryLabel} | {m.BoundsLabel} | work {m.WorkAreaLabel} | {m.BitsPerPixel} bpp");
+            var lines = Monitors.Select(m => $"{m.DisplayLabel} | {m.DeviceName} | {m.PrimaryLabel} | {m.BoundsLabel} | work {m.WorkAreaLabel} | {m.BitsPerPixel} bpp");
             Clipboard.SetText(string.Join(Environment.NewLine, lines));
             _recent.Add("MonitorDesk", $"Copied {Monitors.Count} monitor record(s).");
             _status.Set("Monitor summary copied.", StatusKind.Success);
@@ -158,6 +171,7 @@ public sealed partial class MonitorDeskViewModel : ObservableObject
             CreatedAt = DateTime.Now,
             Displays = Monitors.Select(m => new MonitorLayoutDisplay
             {
+                DisplayNumber = m.DisplayNumber,
                 DeviceName = m.DeviceName,
                 IsPrimary = m.IsPrimary,
                 X = m.X,
@@ -189,7 +203,7 @@ public sealed partial class MonitorDeskViewModel : ObservableObject
         try
         {
             await Task.Run(() => _displayLayout.ApplyMonitorPosition(SelectedMonitor.DeviceName, EditX, EditY));
-            _recent.Add("MonitorDesk", $"Moved {SelectedMonitor.DeviceName} to {EditX},{EditY}.");
+            _recent.Add("MonitorDesk", $"Moved {SelectedMonitor.DisplayLabel} to {EditX},{EditY}.");
             _status.Set("Display position applied.", StatusKind.Success);
             Refresh();
         }
@@ -210,14 +224,11 @@ public sealed partial class MonitorDeskViewModel : ObservableObject
             return;
         }
 
-        var connected = Monitors.Select(m => m.DeviceName).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var displays = preset.Displays
-            .Where(d => connected.Contains(d.DeviceName))
-            .ToList();
+        var displays = MapPresetToConnectedDisplays(preset, requireAll: false);
 
         if (displays.Count == 0)
         {
-            _status.Set("None of the saved displays are currently connected.", StatusKind.Warning);
+            _status.Set("No saved monitor numbers match the current display list.", StatusKind.Warning);
             return;
         }
 
@@ -227,8 +238,8 @@ public sealed partial class MonitorDeskViewModel : ObservableObject
             _recent.Add("MonitorDesk", $"Applied layout {preset.Name}.");
             var suffix = displays.Count == preset.Displays.Count
                 ? string.Empty
-                : $" Skipped {preset.Displays.Count - displays.Count} disconnected display(s).";
-            _status.Set($"Monitor layout applied.{suffix}", StatusKind.Success);
+                : $" Skipped {preset.Displays.Count - displays.Count} monitor number(s) with no connected match.";
+            _status.Set($"Monitor layout applied by monitor number.{suffix}", StatusKind.Success);
             Refresh();
             await SaveAsync();
         }
@@ -282,17 +293,62 @@ public sealed partial class MonitorDeskViewModel : ObservableObject
     {
         if (preset.Displays.Count != Monitors.Count) return false;
 
-        foreach (var monitor in Monitors)
-        {
-            var saved = preset.Displays.FirstOrDefault(d =>
-                string.Equals(d.DeviceName, monitor.DeviceName, StringComparison.OrdinalIgnoreCase));
+        var displays = MapPresetToConnectedDisplays(preset, requireAll: true);
+        if (displays.Count != Monitors.Count) return false;
 
-            if (saved is null) return false;
-            if (saved.IsPrimary != monitor.IsPrimary) return false;
-            if (saved.X != monitor.X || saved.Y != monitor.Y) return false;
-            if (saved.Width != monitor.Width || saved.Height != monitor.Height) return false;
+        foreach (var display in displays)
+        {
+            var monitor = Monitors.FirstOrDefault(m =>
+                string.Equals(m.DeviceName, display.DeviceName, StringComparison.OrdinalIgnoreCase));
+
+            if (monitor is null) return false;
+            if (display.IsPrimary != monitor.IsPrimary) return false;
+            if (display.X != monitor.X || display.Y != monitor.Y) return false;
+            if (display.Width != monitor.Width || display.Height != monitor.Height) return false;
         }
 
         return true;
+    }
+
+    private List<MonitorLayoutDisplay> MapPresetToConnectedDisplays(MonitorLayoutPreset preset, bool requireAll)
+    {
+        NormalizeDisplayNumbers(preset);
+
+        var monitorByNumber = Monitors
+            .GroupBy(m => m.DisplayNumber)
+            .ToDictionary(g => g.Key, g => g.First());
+        var displays = new List<MonitorLayoutDisplay>();
+
+        foreach (var saved in preset.Displays)
+        {
+            if (!monitorByNumber.TryGetValue(saved.DisplayNumber, out var monitor))
+            {
+                if (requireAll)
+                    return new List<MonitorLayoutDisplay>();
+                continue;
+            }
+
+            displays.Add(new MonitorLayoutDisplay
+            {
+                DisplayNumber = saved.DisplayNumber,
+                DeviceName = monitor.DeviceName,
+                IsPrimary = saved.IsPrimary,
+                X = saved.X,
+                Y = saved.Y,
+                Width = saved.Width,
+                Height = saved.Height,
+            });
+        }
+
+        return displays;
+    }
+
+    private static void NormalizeDisplayNumbers(MonitorLayoutPreset preset)
+    {
+        for (var i = 0; i < preset.Displays.Count; i++)
+        {
+            if (preset.Displays[i].DisplayNumber <= 0)
+                preset.Displays[i].DisplayNumber = i + 1;
+        }
     }
 }
