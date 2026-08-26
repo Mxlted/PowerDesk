@@ -99,3 +99,6 @@ secrets.json
 appsettings.*.local.json
 .env
 .env.*
+
+# ---------- Local publish output ----------
+build/

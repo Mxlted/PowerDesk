@@ -1,5 +1,7 @@
 using System;
 using System.IO;
+using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using PowerDesk.Core.Logging;
@@ -46,22 +48,37 @@ public partial class App : Application
 
     public MainWindow? Shell { get; private set; }
     private bool _skipShutdownPersistence;
-    private FileStream? _singleInstanceLock;
+    private Mutex? _singleInstanceMutex;
+    private EventWaitHandle? _activationEvent;
+    private RegisteredWaitHandle? _activationWait;
+
+    private const string InstanceMutexName = @"Local\PowerDesk.SingleInstance";
+    private const string ActivationEventName = @"Local\PowerDesk.Activate";
+    /// <summary>Passed by a relaunch (elevation / reset) so the new process waits for the old one to release the instance lock.</summary>
+    public const string RelaunchArg = "--relaunched";
 
     protected override async void OnStartup(StartupEventArgs e)
     {
-        if (!TryAcquireSingleInstanceLock())
+        var relaunched = e.Args.Any(a => string.Equals(a, RelaunchArg, StringComparison.OrdinalIgnoreCase));
+        if (!TryAcquireSingleInstance(relaunched))
         {
-            MessageBox.Show(
-                "PowerDesk is already running. Use the existing window or tray icon.",
-                "PowerDesk",
-                MessageBoxButton.OK,
-                MessageBoxImage.Information);
+            // Ask the running instance to bring its window forward; only fall back to a dialog if that fails
+            // (e.g. the other instance is elevated and we cannot open its event).
+            if (!TrySignalExistingInstance())
+            {
+                MessageBox.Show(
+                    "PowerDesk is already running. Use the existing window or tray icon.",
+                    "PowerDesk",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+            }
             Shutdown();
             return;
         }
 
         base.OnStartup(e);
+        StartActivationListener();
+        Permissions.RelaunchHandler = () => RelaunchSelf(elevated: true);
 
         DispatcherUnhandledException += (_, args) =>
         {
@@ -139,11 +156,17 @@ public partial class App : Application
         Tray.SnapForegroundLeftRequested  += (_, _) => WindowSizerModule?.ViewModel?.InvokeForegroundSnap(true);
         Tray.SnapForegroundRightRequested += (_, _) => WindowSizerModule?.ViewModel?.InvokeForegroundSnap(false);
 
-        if (Settings.StartMinimized)
+        if (Settings.StartMinimized && Settings.MinimizeToTrayOnClose)
         {
+            // Stay hidden; the tray icon is the way back in. Nothing to Show() yet.
+            Shell.ShowInTaskbar = false;
+            Tray.ShowBalloon("PowerDesk started in the tray", "Click the tray icon to open it.");
+        }
+        else if (Settings.StartMinimized)
+        {
+            // Minimized but still reachable from the taskbar: the window must be shown for that.
             Shell.WindowState = WindowState.Minimized;
-            Shell.ShowInTaskbar = !Settings.MinimizeToTrayOnClose;
-            if (Settings.MinimizeToTrayOnClose) Shell.Hide();
+            Shell.Show();
         }
         else
         {
@@ -154,11 +177,13 @@ public partial class App : Application
     public void ShowShell()
     {
         if (Shell is null) return;
+        Shell.ShowInTaskbar = true;
         if (!Shell.IsVisible) Shell.Show();
         if (Shell.WindowState == WindowState.Minimized) Shell.WindowState = WindowState.Normal;
         Shell.Activate();
         Shell.Topmost = true;
         Shell.Topmost = false;
+        Shell.Focus();
     }
 
     public void SkipShutdownPersistenceOnce() => _skipShutdownPersistence = true;
@@ -168,31 +193,124 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
-        _singleInstanceLock?.Dispose();
-        _singleInstanceLock = null;
+        ReleaseSingleInstance();
         base.OnExit(e);
     }
 
-    private bool TryAcquireSingleInstanceLock()
+    /// <summary>
+    /// Relaunches PowerDesk (optionally elevated) and closes this instance. The instance lock is released
+    /// BEFORE the new process starts so the newcomer never sees "already running", and the newcomer is told
+    /// to retry the lock briefly in case shutdown persistence is still in flight here.
+    /// Returns true when a new process was started (the caller should then close the shell).
+    /// </summary>
+    public bool RelaunchSelf(bool elevated)
+    {
+        var exe = Environment.ProcessPath;
+        if (string.IsNullOrWhiteSpace(exe)) return false;
+        ReleaseSingleInstance();
+        try
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = exe,
+                UseShellExecute = true,
+                Arguments = RelaunchArg,
+            };
+            if (elevated) psi.Verb = "runas";
+            System.Diagnostics.Process.Start(psi);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn($"Relaunch failed or was cancelled: {ex.Message}");
+            // Re-acquire so this instance keeps behaving as the single instance.
+            TryAcquireSingleInstance(relaunched: false);
+            StartActivationListener();
+            return false;
+        }
+    }
+
+    private bool TryAcquireSingleInstance(bool relaunched)
+    {
+        // A relaunched instance may start while the previous one is still finishing its shutdown; give it
+        // a few seconds to let go before deciding another copy is genuinely running.
+        var deadline = DateTime.UtcNow + (relaunched ? TimeSpan.FromSeconds(8) : TimeSpan.Zero);
+        while (true)
+        {
+            try
+            {
+                var mutex = new Mutex(initiallyOwned: true, InstanceMutexName, out var createdNew);
+                if (createdNew)
+                {
+                    _singleInstanceMutex = mutex;
+                    return true;
+                }
+                // Someone else owns it. Wait briefly for it to be released (abandoned mutexes count as acquired).
+                var wait = deadline - DateTime.UtcNow;
+                if (wait <= TimeSpan.Zero) { mutex.Dispose(); return false; }
+                try
+                {
+                    if (mutex.WaitOne(wait)) { _singleInstanceMutex = mutex; return true; }
+                }
+                catch (AbandonedMutexException) { _singleInstanceMutex = mutex; return true; }
+                mutex.Dispose();
+                return false;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // Mutex exists but was created by a differently-privileged process we cannot open: treat as running.
+                if (DateTime.UtcNow >= deadline) return false;
+                Thread.Sleep(150);
+            }
+            catch (Exception ex)
+            {
+                // Kernel object problems should never keep the app from starting.
+                Logger.Warn($"Single-instance mutex unavailable: {ex.Message}");
+                return true;
+            }
+        }
+    }
+
+    private void ReleaseSingleInstance()
+    {
+        try { _activationWait?.Unregister(null); } catch { }
+        _activationWait = null;
+        try { _activationEvent?.Dispose(); } catch { }
+        _activationEvent = null;
+        try { _singleInstanceMutex?.ReleaseMutex(); } catch { }
+        try { _singleInstanceMutex?.Dispose(); } catch { }
+        _singleInstanceMutex = null;
+    }
+
+    private void StartActivationListener()
+    {
+        if (_activationEvent is not null) return;
+        try
+        {
+            _activationEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ActivationEventName);
+            _activationWait = ThreadPool.RegisterWaitForSingleObject(
+                _activationEvent,
+                (_, _) => Dispatcher.BeginInvoke(ShowShell),
+                null,
+                Timeout.Infinite,
+                executeOnlyOnce: false);
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn($"Activation listener unavailable: {ex.Message}");
+        }
+    }
+
+    private static bool TrySignalExistingInstance()
     {
         try
         {
-            var lockPath = Path.Combine(Core.Services.PathService.Root, "PowerDesk.instance.lock");
-            _singleInstanceLock = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
-            _singleInstanceLock.SetLength(0);
-            using var writer = new StreamWriter(_singleInstanceLock, leaveOpen: true);
-            writer.Write(Environment.ProcessId);
-            writer.Flush();
-            _singleInstanceLock.Position = 0;
-            return true;
+            if (EventWaitHandle.TryOpenExisting(ActivationEventName, out var evt))
+            {
+                using (evt) return evt.Set();
+            }
         }
-        catch (IOException)
-        {
-            return false;
-        }
-        catch (UnauthorizedAccessException)
-        {
-            return false;
-        }
+        catch { }
+        return false;
     }
 }

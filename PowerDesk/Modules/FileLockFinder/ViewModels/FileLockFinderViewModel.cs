@@ -1,8 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
-using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -20,6 +22,8 @@ namespace PowerDesk.Modules.FileLockFinder.ViewModels;
 
 public sealed partial class FileLockFinderViewModel : ObservableObject
 {
+    private static readonly TimeSpan StopTimeout = TimeSpan.FromSeconds(10);
+
     private readonly ILogger _log;
     private readonly StatusService _status;
     private readonly RecentActionsService _recent;
@@ -29,14 +33,30 @@ public sealed partial class FileLockFinderViewModel : ObservableObject
 
     public ObservableCollection<LockingProcessInfo> Processes { get; } = new();
 
-    [ObservableProperty] private string _targetPath = string.Empty;
-    [ObservableProperty] private LockingProcessInfo? _selectedProcess;
-    [ObservableProperty] private bool _isScanning;
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(ScanCommand))]
+    private string _targetPath = string.Empty;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(CopyProcessIdCommand))]
+    [NotifyCanExecuteChangedFor(nameof(OpenProcessLocationCommand))]
+    [NotifyCanExecuteChangedFor(nameof(StopProcessCommand))]
+    private LockingProcessInfo? _selectedProcess;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(ScanCommand))]
+    [NotifyCanExecuteChangedFor(nameof(StopProcessCommand))]
+    [NotifyPropertyChangedFor(nameof(ShowEmptyState))]
+    private bool _isScanning;
+
     [ObservableProperty] private DateTime? _lastScan;
     [ObservableProperty] private string _scanScopeLabel = string.Empty;
+    [ObservableProperty] private string _emptyStateText = "Choose a file or folder, then press Scan.";
 
     public bool IsAdmin => _permissions.IsAdministrator;
     public int ProcessCount => Processes.Count;
+    public bool HasProcesses => Processes.Count > 0;
+    public bool ShowEmptyState => !IsScanning && Processes.Count == 0;
 
     public FileLockFinderViewModel(
         ILogger log,
@@ -52,39 +72,78 @@ public sealed partial class FileLockFinderViewModel : ObservableObject
         _confirm = confirm;
     }
 
-    public void SetTargetPathFromDrop(string path)
+    public void SetTargetPathFromDrop(string path) => SetTargetPathsFromDrop([path]);
+
+    /// <summary>
+    /// Accepts a full drag-drop payload. Only one target can be scanned at a time, so the first
+    /// existing path wins and the user is told how many other items were ignored.
+    /// </summary>
+    public void SetTargetPathsFromDrop(IEnumerable<string>? paths)
     {
-        if (string.IsNullOrWhiteSpace(path)) return;
-        TargetPath = path;
-        _status.Set(Directory.Exists(path) ? "Folder path loaded." : "File path loaded.", StatusKind.Info);
+        var (target, ignored) = FileLockLogic.PickDropTarget(paths, p => File.Exists(p) || Directory.Exists(p));
+        if (target is null)
+        {
+            _status.Set("Dropped items are not files or folders on disk.", StatusKind.Warning);
+            return;
+        }
+
+        TargetPath = target;
+        var kind = Directory.Exists(target) ? "Folder" : "File";
+        _status.Set(ignored > 0
+            ? $"{kind} path loaded. {ignored} other dropped item(s) ignored: one target at a time."
+            : $"{kind} path loaded.", StatusKind.Info);
+
+        if (ScanCommand.CanExecute(null)) ScanCommand.Execute(null);
     }
 
     [RelayCommand]
     private void SelectFile()
     {
-        var dlg = new OpenFileDialog
+        try
         {
-            Filter = "All files|*.*",
-            Title = "Select a locked file",
-        };
-        if (dlg.ShowDialog() == true) TargetPath = dlg.FileName;
+            var dlg = new OpenFileDialog
+            {
+                Filter = "All files|*.*",
+                Title = "Select a locked file",
+                CheckFileExists = true,
+            };
+            if (dlg.ShowDialog() == true) TargetPath = dlg.FileName;
+        }
+        catch (Exception ex)
+        {
+            _log.Error("Select file", ex);
+            _status.Set("Could not open the file picker.", StatusKind.Warning);
+        }
     }
 
     [RelayCommand]
     private void SelectFolder()
     {
-        using var dlg = new FolderBrowserDialog
+        try
         {
-            Description = "Select a folder to inspect",
-            UseDescriptionForTitle = true,
-        };
-        if (dlg.ShowDialog() == DialogResult.OK) TargetPath = dlg.SelectedPath;
+            using var dlg = new FolderBrowserDialog
+            {
+                Description = "Select a folder to inspect",
+                UseDescriptionForTitle = true,
+            };
+            if (dlg.ShowDialog() == DialogResult.OK) TargetPath = dlg.SelectedPath;
+        }
+        catch (Exception ex)
+        {
+            _log.Error("Select folder", ex);
+            _status.Set("Could not open the folder picker.", StatusKind.Warning);
+        }
     }
 
-    [RelayCommand]
-    private async Task ScanAsync()
+    private bool CanScan => !IsScanning && !string.IsNullOrWhiteSpace(TargetPath);
+
+    [RelayCommand(CanExecute = nameof(CanScan))]
+    private Task ScanAsync() => RunScanAsync();
+
+    private async Task RunScanAsync()
     {
-        if (string.IsNullOrWhiteSpace(TargetPath))
+        var path = TargetPath?.Trim() ?? string.Empty;
+        if (path.Length == 0)
         {
             _status.Set("Choose a file or folder first.", StatusKind.Warning);
             return;
@@ -93,24 +152,36 @@ public sealed partial class FileLockFinderViewModel : ObservableObject
         IsScanning = true;
         try
         {
-            var path = TargetPath.Trim();
             var result = await Task.Run(() => _restartManager.FindLockingProcesses(path));
-            var list = result.Processes;
+            var list = FileLockLogic.Sort(result.Processes);
             UiDispatcher.Invoke(() =>
             {
+                var previousPid = SelectedProcess?.ProcessId;
                 Processes.Clear();
-                foreach (var item in list.OrderBy(p => p.DisplayName, StringComparer.OrdinalIgnoreCase))
-                    Processes.Add(item);
-                SelectedProcess = Processes.FirstOrDefault();
+                foreach (var item in list) Processes.Add(item);
+                SelectedProcess = list.Find(p => p.ProcessId == previousPid) ?? list.FirstOrDefault();
                 LastScan = DateTime.Now;
-                ScanScopeLabel = result.ResourceLimitReached
-                    ? $"Scanned first {result.ResourceCount} resources."
-                    : $"Scanned {result.ResourceCount} resource(s).";
-                OnPropertyChanged(nameof(ProcessCount));
+                ScanScopeLabel = FileLockLogic.BuildScopeLabel(result.ResourceCount, result.ResourceLimitReached, result.IsFolder);
+                EmptyStateText = "No processes are locking this path.";
+                NotifyProcessesChanged();
             });
+
             _recent.Add("FileLockFinder", $"Scanned {Path.GetFileName(path)}.");
-            var suffix = result.ResourceLimitReached ? " Folder scan was capped for responsiveness." : string.Empty;
-            _status.Set(list.Count == 0 ? $"No locking processes found.{suffix}" : $"Found {list.Count} locking process(es).{suffix}", StatusKind.Success);
+            var suffix = result.ResourceLimitReached
+                ? $" Only the first {result.ResourceCount} files were checked."
+                : string.Empty;
+            _status.Set(list.Count == 0
+                ? $"No locking processes found.{suffix}"
+                : $"Found {list.Count} locking process(es).{suffix}", StatusKind.Success);
+        }
+        catch (FileNotFoundException)
+        {
+            _status.Set("That path does not exist.", StatusKind.Warning);
+        }
+        catch (Win32Exception ex)
+        {
+            _log.Error("File lock scan (Restart Manager)", ex);
+            _status.Set($"Restart Manager error: {ex.Message}", StatusKind.Error);
         }
         catch (Exception ex)
         {
@@ -123,7 +194,9 @@ public sealed partial class FileLockFinderViewModel : ObservableObject
         }
     }
 
-    [RelayCommand]
+    private bool HasSelection => SelectedProcess is not null;
+
+    [RelayCommand(CanExecute = nameof(HasSelection))]
     private void CopyProcessId()
     {
         if (SelectedProcess is null)
@@ -143,17 +216,20 @@ public sealed partial class FileLockFinderViewModel : ObservableObject
         }
     }
 
-    [RelayCommand]
+    private bool CanOpenLocation => !string.IsNullOrWhiteSpace(SelectedProcess?.ProcessPath);
+
+    [RelayCommand(CanExecute = nameof(CanOpenLocation))]
     private void OpenProcessLocation()
     {
-        if (SelectedProcess is null || string.IsNullOrWhiteSpace(SelectedProcess.ProcessPath) || !File.Exists(SelectedProcess.ProcessPath))
+        var path = SelectedProcess?.ProcessPath;
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
         {
             _status.Set("Process location is unavailable.", StatusKind.Warning);
             return;
         }
         try
         {
-            Process.Start("explorer.exe", $"/select,\"{SelectedProcess.ProcessPath}\"");
+            using var explorer = Process.Start("explorer.exe", $"/select,\"{path}\"");
         }
         catch (Exception ex)
         {
@@ -162,44 +238,84 @@ public sealed partial class FileLockFinderViewModel : ObservableObject
         }
     }
 
-    [RelayCommand]
+    private bool CanStop => !IsScanning && SelectedProcess is { CanStop: true };
+
+    [RelayCommand(CanExecute = nameof(CanStop))]
     private async Task StopProcessAsync()
     {
-        if (SelectedProcess is null)
+        var selected = SelectedProcess;
+        if (selected is null)
         {
             _status.Set("Select a process first.", StatusKind.Warning);
             return;
         }
-        if (!_confirm.Confirm($"Stop process {SelectedProcess.DisplayName} ({SelectedProcess.ProcessId})?", "Stop locking process", destructive: true))
+        if (selected.IsCurrentProcess)
+        {
+            _status.Set("PowerDesk itself is holding this lock. Close the file inside PowerDesk instead.", StatusKind.Warning);
+            return;
+        }
+
+        var risk = selected.IsCriticalSystemProcess ? ProcessRisk.Critical : ProcessRisk.None;
+        var title = risk == ProcessRisk.Critical ? "Stop a Windows system process?" : "Stop locking process";
+        if (!_confirm.Confirm(FileLockLogic.BuildStopConfirmation(selected, risk), title, destructive: true))
             return;
 
+        IsScanning = true;
         try
         {
-            var lockedProcess = await ResolveCurrentLockOwnerAsync(SelectedProcess);
-            if (lockedProcess is null)
+            var owner = await ResolveCurrentLockOwnerAsync(selected);
+            if (owner is null)
             {
                 _status.Set("That process is no longer locking the selected path.", StatusKind.Warning);
-                await ScanAsync();
+                await RunScanAsync();
                 return;
             }
 
-            using var process = Process.GetProcessById(lockedProcess.ProcessId);
-            if (!MatchesStartTime(process, lockedProcess))
+            using var process = Process.GetProcessById(owner.ProcessId);
+            if (!MatchesStartTime(process, owner))
             {
-                _status.Set("The process ID was reused before it could be stopped.", StatusKind.Warning);
-                await ScanAsync();
+                _status.Set("The process ID was reused by another process, so nothing was stopped.", StatusKind.Warning);
+                await RunScanAsync();
                 return;
             }
+
             process.Kill(entireProcessTree: false);
-            await process.WaitForExitAsync();
-            _recent.Add("FileLockFinder", $"Stopped process {lockedProcess.ProcessId}.");
-            _status.Set("Process stopped.", StatusKind.Success);
-            await ScanAsync();
+            using var cts = new CancellationTokenSource(StopTimeout);
+            try
+            {
+                await process.WaitForExitAsync(cts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                _status.Set("Stop was requested but the process has not exited yet. Rescan in a moment.", StatusKind.Warning);
+                return;
+            }
+
+            _recent.Add("FileLockFinder", $"Stopped {owner.DisplayName} (PID {owner.ProcessId}).");
+            _status.Set($"Stopped {owner.DisplayName}.", StatusKind.Success);
+            await RunScanAsync();
+        }
+        catch (ArgumentException)
+        {
+            // Process.GetProcessById: the process exited between the scan and the stop.
+            _status.Set("The process already exited.", StatusKind.Info);
+            await RunScanAsync();
+        }
+        catch (Win32Exception ex) when (ex.NativeErrorCode == 5)
+        {
+            _log.Error("Stop locking process (access denied)", ex);
+            _status.Set(IsAdmin
+                ? "Access denied. That process is protected by Windows and cannot be stopped."
+                : "Access denied. Relaunch PowerDesk as administrator to stop this process.", StatusKind.Error);
         }
         catch (Exception ex)
         {
             _log.Error("Stop locking process", ex);
             _status.Set(IsAdmin ? "Could not stop the process." : "Could not stop the process. Administrator may be required.", StatusKind.Error);
+        }
+        finally
+        {
+            IsScanning = false;
         }
     }
 
@@ -215,13 +331,23 @@ public sealed partial class FileLockFinderViewModel : ObservableObject
         else App.Instance.Shell?.ForceClose();
     }
 
+    private void NotifyProcessesChanged()
+    {
+        OnPropertyChanged(nameof(ProcessCount));
+        OnPropertyChanged(nameof(HasProcesses));
+        OnPropertyChanged(nameof(ShowEmptyState));
+        StopProcessCommand.NotifyCanExecuteChanged();
+    }
+
+    /// <summary>Rescans so we only stop a process that is still holding the lock right now (guards PID reuse).</summary>
     private async Task<LockingProcessInfo?> ResolveCurrentLockOwnerAsync(LockingProcessInfo selected)
     {
-        if (string.IsNullOrWhiteSpace(TargetPath)) return null;
-        var result = await Task.Run(() => _restartManager.FindLockingProcesses(TargetPath.Trim()));
+        var path = TargetPath?.Trim();
+        if (string.IsNullOrWhiteSpace(path)) return null;
+        var result = await Task.Run(() => _restartManager.FindLockingProcesses(path));
         return result.Processes.FirstOrDefault(p =>
             p.ProcessId == selected.ProcessId &&
-            SameStartTime(p.StartTimeUtc, selected.StartTimeUtc));
+            FileLockLogic.SameStartTime(p.StartTimeUtc, selected.StartTimeUtc));
     }
 
     private static bool MatchesStartTime(Process process, LockingProcessInfo expected)
@@ -229,17 +355,11 @@ public sealed partial class FileLockFinderViewModel : ObservableObject
         if (expected.StartTimeUtc is null) return true;
         try
         {
-            return SameStartTime(process.StartTime.ToUniversalTime(), expected.StartTimeUtc);
+            return FileLockLogic.SameStartTime(process.StartTime.ToUniversalTime(), expected.StartTimeUtc);
         }
         catch
         {
             return false;
         }
-    }
-
-    private static bool SameStartTime(DateTime? left, DateTime? right)
-    {
-        if (left is null || right is null) return left is null && right is null;
-        return Math.Abs((left.Value.ToUniversalTime() - right.Value.ToUniversalTime()).TotalSeconds) < 2;
     }
 }

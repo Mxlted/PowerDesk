@@ -1,5 +1,3 @@
-using System.Linq;
-using System.Windows;
 using PowerDesk.Modules.HashDesk.ViewModels;
 using DataFormats = System.Windows.DataFormats;
 using DragEventArgs = System.Windows.DragEventArgs;
@@ -27,8 +25,17 @@ public partial class HashDeskView : UserControl
 
     private async void Root_Drop(object sender, DragEventArgs e)
     {
-        if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return;
-        if (e.Data.GetData(DataFormats.FileDrop) is string[] paths)
-            await _vm.AddFilesAsync(paths.Where(System.IO.File.Exists));
+        // async void: everything must be caught here, otherwise an exception tears down the shell.
+        try
+        {
+            if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return;
+            if (e.Data.GetData(DataFormats.FileDrop) is not string[] paths) return;
+            e.Handled = true;
+            await _vm.AddFilesAsync(paths);
+        }
+        catch
+        {
+            // AddFilesAsync reports its own failures; this only guards broken drag data objects.
+        }
     }
 }

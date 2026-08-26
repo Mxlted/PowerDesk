@@ -23,13 +23,25 @@ public sealed class PermissionService
     }
 
     /// <summary>
+    /// Optional shell-provided relaunch routine. The shell installs one that releases the single-instance
+    /// lock before spawning, so the elevated copy never sees "PowerDesk is already running".
+    /// </summary>
+    public Func<bool>? RelaunchHandler { get; set; }
+
+    /// <summary>
     /// Relaunches PowerDesk with the runas verb. Returns true if a process was started; false on cancel or error.
+    /// Callers should close the current shell when this returns true.
     /// </summary>
     public bool TryRelaunchAsAdmin(string? args = null)
     {
+        if (RelaunchHandler is { } handler)
+        {
+            try { return handler(); }
+            catch { return false; }
+        }
         try
         {
-            var path = Process.GetCurrentProcess().MainModule?.FileName;
+            var path = Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule?.FileName;
             if (string.IsNullOrWhiteSpace(path)) return false;
             var psi = new ProcessStartInfo
             {

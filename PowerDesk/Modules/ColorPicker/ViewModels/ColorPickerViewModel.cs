@@ -1,18 +1,29 @@
 using System;
-using System.Globalization;
+using System.Collections.ObjectModel;
+using System.Linq;
 using System.Runtime.InteropServices;
+using System.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using PowerDesk.Core.Logging;
 using PowerDesk.Core.Services;
+using PowerDesk.Modules.ColorPicker.Services;
 using Clipboard = System.Windows.Clipboard;
 using ColorDialog = System.Windows.Forms.ColorDialog;
 using DialogResult = System.Windows.Forms.DialogResult;
 using DrawingColor = System.Drawing.Color;
+using IWin32Window = System.Windows.Forms.IWin32Window;
 using MediaColor = System.Windows.Media.Color;
 using SolidColorBrush = System.Windows.Media.SolidColorBrush;
 
 namespace PowerDesk.Modules.ColorPicker.ViewModels;
+
+/// <summary>A previously picked color shown in the history strip.</summary>
+public sealed class ColorHistoryEntry
+{
+    public string Hex { get; init; } = string.Empty;
+    public SolidColorBrush Brush { get; init; } = new(MediaColor.FromRgb(0, 0, 0));
+}
 
 public sealed partial class ColorPickerViewModel : ObservableObject
 {
@@ -28,33 +39,67 @@ public sealed partial class ColorPickerViewModel : ObservableObject
     [ObservableProperty] private string _hsl = "hsl(217, 91%, 60%)";
     [ObservableProperty] private SolidColorBrush _swatchBrush = new(MediaColor.FromRgb(59, 130, 246));
 
+    /// <summary>False while the HEX box contains text that is not a complete, valid color.</summary>
+    [ObservableProperty] private bool _isHexValid = true;
+
+    /// <summary>Most recent first; populated by screen samples, dialog picks, and committed hex entries.</summary>
+    public ObservableCollection<ColorHistoryEntry> History { get; } = new();
+
+    public bool HasHistory => History.Count > 0;
+
+    /// <summary>Canonical lowercase #rrggbb for the current channels (what Copy HEX places on the clipboard).</summary>
+    public string CanonicalHex => ColorLogic.FormatHex(Red, Green, Blue);
+
     public ColorPickerViewModel(ILogger log, StatusService status)
     {
         _log = log;
         _status = status;
-        SetColor(Red, Green, Blue);
+        SetColor(Red, Green, Blue, rewriteHex: true);
     }
 
     partial void OnHexChanged(string value)
     {
         if (_updating) return;
-        if (TryParseHex(value, out var r, out var g, out var b))
-            SetColor(r, g, b);
+        if (ColorLogic.TryParseHex(value, out var r, out var g, out var b))
+        {
+            // Keep the user's text as typed (rewriting it mid-keystroke made 6-digit entry impossible).
+            SetColor(r, g, b, rewriteHex: false);
+            IsHexValid = true;
+        }
+        else
+        {
+            IsHexValid = false;
+        }
     }
 
     partial void OnRedChanged(int value)
     {
-        if (!_updating) SetColor(value, Green, Blue);
+        if (!_updating) SetColor(value, Green, Blue, rewriteHex: true);
     }
 
     partial void OnGreenChanged(int value)
     {
-        if (!_updating) SetColor(Red, value, Blue);
+        if (!_updating) SetColor(Red, value, Blue, rewriteHex: true);
     }
 
     partial void OnBlueChanged(int value)
     {
-        if (!_updating) SetColor(Red, Green, value);
+        if (!_updating) SetColor(Red, Green, value, rewriteHex: true);
+    }
+
+    /// <summary>Normalizes the HEX box to #rrggbb (Enter / focus loss) and records the color in history.</summary>
+    [RelayCommand]
+    private void CommitHex()
+    {
+        if (!ColorLogic.TryParseHex(Hex, out var r, out var g, out var b))
+        {
+            _status.Set("Enter a color as #RGB, #RRGGBB, or #RRGGBBAA.", StatusKind.Warning);
+            return;
+        }
+
+        SetColor(r, g, b, rewriteHex: true);
+        IsHexValid = true;
+        AddToHistory();
     }
 
     [RelayCommand]
@@ -65,10 +110,18 @@ public sealed partial class ColorPickerViewModel : ObservableObject
             using var dialog = new ColorDialog
             {
                 FullOpen = true,
+                AnyColor = true,
                 Color = DrawingColor.FromArgb(Red, Green, Blue),
             };
-            if (dialog.ShowDialog() == DialogResult.OK)
-                SetColor(dialog.Color.R, dialog.Color.G, dialog.Color.B);
+
+            var owner = TryGetShellOwner();
+            var result = owner is null ? dialog.ShowDialog() : dialog.ShowDialog(owner);
+            if (result == DialogResult.OK)
+            {
+                SetColor(dialog.Color.R, dialog.Color.G, dialog.Color.B, rewriteHex: true);
+                AddToHistory();
+                _status.Set($"Color set to {CanonicalHex}.", StatusKind.Success);
+            }
         }
         catch (Exception ex)
         {
@@ -78,56 +131,56 @@ public sealed partial class ColorPickerViewModel : ObservableObject
     }
 
     [RelayCommand]
-    private void SampleCursorPixel()
+    private void SampleCursorPixel() => SampleAtCursor(announce: true);
+
+    /// <summary>Samples the pixel under the mouse cursor using physical screen coordinates.</summary>
+    public bool SampleAtCursor(bool announce = true)
     {
         try
         {
             if (!GetCursorPos(out var point))
             {
-                _status.Set("Could not read cursor position.", StatusKind.Warning);
-                return;
+                if (announce) _status.Set("Could not read cursor position.", StatusKind.Warning);
+                return false;
             }
 
-            SampleScreenPixelAt(point.X, point.Y);
+            return SampleScreenPixelAt(point.X, point.Y, announce);
         }
         catch (Exception ex)
         {
             _log.Error("Sample cursor pixel", ex);
-            _status.Set("Screen pixel sample failed.", StatusKind.Warning);
+            if (announce) _status.Set("Screen pixel sample failed.", StatusKind.Warning);
+            return false;
         }
     }
 
+    /// <summary>
+    /// Samples a pixel from the whole virtual screen (negative coordinates for monitors left of or
+    /// above the primary are valid). Coordinates are physical pixels, as returned by GetCursorPos.
+    /// </summary>
     public bool SampleScreenPixelAt(int x, int y, bool announce = true)
     {
+        var dc = IntPtr.Zero;
         try
         {
-            var dc = GetDC(IntPtr.Zero);
+            dc = GetDC(IntPtr.Zero);
             if (dc == IntPtr.Zero)
             {
                 if (announce) _status.Set("Could not sample the screen.", StatusKind.Warning);
                 return false;
             }
 
-            try
+            var colorRef = GetPixel(dc, x, y);
+            if (!ColorLogic.TryDecodeColorRef(colorRef, out var r, out var g, out var b))
             {
-                var colorRef = GetPixel(dc, x, y);
-                if (colorRef == -1)
-                {
-                    if (announce) _status.Set("Screen pixel sample failed.", StatusKind.Warning);
-                    return false;
-                }
+                if (announce) _status.Set($"No pixel at {x},{y} (outside every display).", StatusKind.Warning);
+                return false;
+            }
 
-                var r = colorRef & 0xFF;
-                var g = (colorRef >> 8) & 0xFF;
-                var b = (colorRef >> 16) & 0xFF;
-                SetColor(r, g, b);
-                if (announce) _status.Set($"Sampled pixel at {x},{y}.", StatusKind.Success);
-                return true;
-            }
-            finally
-            {
-                ReleaseDC(IntPtr.Zero, dc);
-            }
+            SetColor(r, g, b, rewriteHex: true);
+            AddToHistory();
+            if (announce) _status.Set($"Sampled {CanonicalHex} at {x},{y}.", StatusKind.Success);
+            return true;
         }
         catch (Exception ex)
         {
@@ -135,26 +188,68 @@ public sealed partial class ColorPickerViewModel : ObservableObject
             if (announce) _status.Set("Screen pixel sample failed.", StatusKind.Warning);
             return false;
         }
+        finally
+        {
+            if (dc != IntPtr.Zero) ReleaseDC(IntPtr.Zero, dc);
+        }
     }
 
-    [RelayCommand] private void CopyHex() => Copy(Hex, "HEX copied.");
+    [RelayCommand] private void CopyHex() => Copy(CanonicalHex, "HEX copied.");
     [RelayCommand] private void CopyRgb() => Copy(Rgb, "RGB copied.");
     [RelayCommand] private void CopyHsl() => Copy(Hsl, "HSL copied.");
 
-    private void SetColor(int red, int green, int blue)
+    [RelayCommand]
+    private void SelectHistory(ColorHistoryEntry? entry)
+    {
+        if (entry is null || !ColorLogic.TryParseHex(entry.Hex, out var r, out var g, out var b)) return;
+        SetColor(r, g, b, rewriteHex: true);
+        AddToHistory();
+        _status.Set($"Color set to {CanonicalHex}.", StatusKind.Info);
+    }
+
+    [RelayCommand]
+    private void ClearHistory()
+    {
+        History.Clear();
+        OnPropertyChanged(nameof(HasHistory));
+    }
+
+    private void AddToHistory()
+    {
+        var hex = CanonicalHex;
+        var hexes = History.Select(h => h.Hex).ToList();
+        if (!ColorLogic.PushHistory(hexes, hex)) return;
+
+        History.Clear();
+        foreach (var h in hexes)
+        {
+            ColorLogic.TryParseHex(h, out var r, out var g, out var b);
+            var brush = new SolidColorBrush(MediaColor.FromRgb((byte)r, (byte)g, (byte)b));
+            brush.Freeze();
+            History.Add(new ColorHistoryEntry { Hex = h, Brush = brush });
+        }
+        OnPropertyChanged(nameof(HasHistory));
+    }
+
+    private void SetColor(int red, int green, int blue, bool rewriteHex)
     {
         _updating = true;
         try
         {
-            Red = Clamp(red);
-            Green = Clamp(green);
-            Blue = Clamp(blue);
-            Hex = $"#{Red:X2}{Green:X2}{Blue:X2}".ToLowerInvariant();
-            Rgb = $"rgb({Red}, {Green}, {Blue})";
-            Hsl = ToHsl(Red, Green, Blue);
+            Red = ColorLogic.Clamp(red);
+            Green = ColorLogic.Clamp(green);
+            Blue = ColorLogic.Clamp(blue);
+            if (rewriteHex)
+            {
+                Hex = ColorLogic.FormatHex(Red, Green, Blue);
+                IsHexValid = true;
+            }
+            Rgb = ColorLogic.FormatRgb(Red, Green, Blue);
+            Hsl = ColorLogic.FormatHsl(Red, Green, Blue);
             var brush = new SolidColorBrush(MediaColor.FromRgb((byte)Red, (byte)Green, (byte)Blue));
             brush.Freeze();
             SwatchBrush = brush;
+            OnPropertyChanged(nameof(CanonicalHex));
         }
         finally
         {
@@ -166,52 +261,52 @@ public sealed partial class ColorPickerViewModel : ObservableObject
     {
         try
         {
-            Clipboard.SetText(text);
+            SetClipboardText(text);
             _status.Set(message, StatusKind.Success);
         }
         catch (Exception ex)
         {
             _log.Error("Copy color", ex);
-            _status.Set("Could not copy color.", StatusKind.Warning);
+            _status.Set("Could not copy color (clipboard is busy). Try again.", StatusKind.Warning);
         }
     }
 
-    private static bool TryParseHex(string value, out int r, out int g, out int b)
+    /// <summary>Clipboard access fails transiently (CLIPBRD_E_CANT_OPEN) while another app holds it; retry briefly.</summary>
+    private static void SetClipboardText(string text)
     {
-        r = g = b = 0;
-        var s = (value ?? string.Empty).Trim().TrimStart('#');
-        if (s.Length == 3)
-            s = string.Concat(s[0], s[0], s[1], s[1], s[2], s[2]);
-        if (s.Length != 6) return false;
-        return int.TryParse(s[..2], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out r)
-            && int.TryParse(s.Substring(2, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out g)
-            && int.TryParse(s.Substring(4, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out b);
-    }
-
-    private static int Clamp(int value) => Math.Clamp(value, 0, 255);
-
-    private static string ToHsl(int r, int g, int b)
-    {
-        var rd = r / 255d;
-        var gd = g / 255d;
-        var bd = b / 255d;
-        var max = Math.Max(rd, Math.Max(gd, bd));
-        var min = Math.Min(rd, Math.Min(gd, bd));
-        var light = (max + min) / 2d;
-        double hue = 0;
-        double sat = 0;
-
-        if (Math.Abs(max - min) > double.Epsilon)
+        const int attempts = 4;
+        for (var i = 1; ; i++)
         {
-            var delta = max - min;
-            sat = light > 0.5 ? delta / (2d - max - min) : delta / (max + min);
-            if (Math.Abs(max - rd) < double.Epsilon) hue = (gd - bd) / delta + (gd < bd ? 6 : 0);
-            else if (Math.Abs(max - gd) < double.Epsilon) hue = (bd - rd) / delta + 2;
-            else hue = (rd - gd) / delta + 4;
-            hue /= 6;
+            try
+            {
+                Clipboard.SetDataObject(text, true);
+                return;
+            }
+            catch (Exception) when (i < attempts)
+            {
+                Thread.Sleep(40 * i);
+            }
         }
+    }
 
-        return $"hsl({Math.Round(hue * 360)}, {Math.Round(sat * 100)}%, {Math.Round(light * 100)}%)";
+    private static IWin32Window? TryGetShellOwner()
+    {
+        try
+        {
+            var window = System.Windows.Application.Current?.MainWindow;
+            if (window is null || !window.IsVisible) return null;
+            var handle = new System.Windows.Interop.WindowInteropHelper(window).Handle;
+            return handle == IntPtr.Zero ? null : new HandleOwner(handle);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private sealed class HandleOwner(IntPtr handle) : IWin32Window
+    {
+        public IntPtr Handle { get; } = handle;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -221,7 +316,8 @@ public sealed partial class ColorPickerViewModel : ObservableObject
         public int Y;
     }
 
-    [DllImport("user32.dll")]
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetCursorPos(out POINT lpPoint);
 
     [DllImport("user32.dll")]

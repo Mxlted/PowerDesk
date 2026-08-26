@@ -18,21 +18,24 @@ public sealed class StartupActionResult
 
 /// <summary>
 /// Applies enable/disable to startup items using the same conventions Task Manager uses where possible:
-/// registry value renamed with leading '!', shortcuts moved to a Disabled subfolder, tasks toggled,
-/// services flipped between Automatic, Manual, and Disabled via sc.exe.
+/// Run keys and startup-folder entries via Explorer's StartupApproved state, RunOnce values parked in an
+/// AutorunsDisabled sub-key (Autoruns convention), tasks toggled through the Task Scheduler API and
+/// services flipped between Automatic, Manual and Disabled via sc.exe.
 /// </summary>
 public sealed class StartupController
 {
-    private const string StartupApprovedRoot = @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved";
-
     private readonly ILogger _log;
 
     public StartupController(ILogger log) => _log = log;
 
+    private static StartupActionResult Fail(string message) => new() { Success = false, Message = message };
+    private static StartupActionResult Elevate(string message) => new() { Success = false, NeedsElevation = true, Message = message };
+    private static StartupActionResult Ok(string message, string? locator = null) => new() { Success = true, Message = message, UpdatedLocator = locator };
+
     public StartupActionResult Toggle(StartupItem item, bool enable)
     {
         if (item.Enabled == enable)
-            return new StartupActionResult { Success = true, Message = "No change." };
+            return Ok("No change.");
         try
         {
             return item.Source switch
@@ -41,146 +44,127 @@ public sealed class StartupController
                 StartupSource.StartupFolder => ToggleStartupFolder(item, enable),
                 StartupSource.TaskScheduler => ToggleTask(item, enable),
                 StartupSource.Service       => SetServiceStartupType(item, enable ? ServiceStartupType.Automatic : ServiceStartupType.Disabled),
-                _ => new StartupActionResult { Success = false, Message = "Unknown source." },
+                _ => Fail("Unknown source."),
             };
         }
         catch (UnauthorizedAccessException)
         {
-            return new StartupActionResult { Success = false, NeedsElevation = true, Message = "Administrator privileges required." };
+            return Elevate("Administrator privileges required.");
         }
         catch (System.Security.SecurityException)
         {
-            return new StartupActionResult { Success = false, NeedsElevation = true, Message = "Administrator privileges required." };
+            return Elevate("Administrator privileges required.");
         }
         catch (Exception ex)
         {
             _log.Error($"Toggle '{item.Name}'", ex);
-            return new StartupActionResult { Success = false, Message = ex.Message };
+            return Fail(ex.Message);
         }
     }
 
+    private static RegistryKey OpenBase(RegistryHive hive) =>
+        RegistryKey.OpenBaseKey(hive, hive == RegistryHive.LocalMachine ? RegistryView.Registry64 : RegistryView.Default);
+
     private StartupActionResult ToggleRegistry(StartupItem item, bool enable)
     {
-        // Locator format: "{Hive}|{path}|{rawValueName}"
-        var parts = item.Locator.Split('|', 3);
-        if (parts.Length != 3) return new StartupActionResult { Success = false, Message = "Malformed registry locator." };
-        if (!Enum.TryParse<RegistryHive>(parts[0], out var hive))
-            return new StartupActionResult { Success = false, Message = "Unknown hive." };
-        var keyPath = parts[1];
-        var rawName = parts[2];
+        if (!StartupPilotLogic.TryParseRegistryLocator(item.Locator, out var hive, out var keyPath, out var valueName))
+            return Fail("Malformed registry locator.");
 
         if (hive == RegistryHive.LocalMachine && !IsAdmin())
-            return new StartupActionResult { Success = false, NeedsElevation = true, Message = "Editing HKLM requires administrator." };
+            return Elevate("Editing HKLM requires administrator.");
 
-        using var baseKey = RegistryKey.OpenBaseKey(hive,
-            hive == RegistryHive.LocalMachine ? RegistryView.Registry64 : RegistryView.Default);
-        using var key = baseKey.OpenSubKey(keyPath, writable: true);
-        if (key is null) return new StartupActionResult { Success = false, Message = "Registry key not found." };
+        using var baseKey = OpenBase(hive);
 
-        var value = key.GetValue(rawName, null, RegistryValueOptions.DoNotExpandEnvironmentNames);
-        if (value is null) return new StartupActionResult { Success = false, Message = "Registry value not found." };
-        var valueKind = key.GetValueKind(rawName);
-        var approvedSubkey = StartupApprovedSubkeyForRegistryPath(keyPath);
-        if (approvedSubkey is not null)
+        // 1. Value parked under <key>\AutorunsDisabled: enabling moves it back to the live key.
+        if (StartupPilotLogic.IsAutorunsDisabledKey(keyPath))
         {
-            var approvedName = rawName.TrimStart('!');
-            var updatedRawName = rawName;
-            if (enable && rawName.StartsWith("!", StringComparison.Ordinal))
-            {
-                if (Array.Exists(key.GetValueNames(), name => string.Equals(name, approvedName, StringComparison.Ordinal)))
-                    return new StartupActionResult
-                    {
-                        Success = false,
-                        Message = $"A registry value named '{approvedName}' already exists; refusing to overwrite it.",
-                    };
-                key.SetValue(approvedName, value, valueKind);
-                key.DeleteValue(rawName, throwOnMissingValue: false);
-                updatedRawName = approvedName;
-            }
-
-            WriteStartupApprovedState(hive, approvedSubkey, approvedName, enable);
-            return new StartupActionResult
-            {
-                Success = true,
-                Message = enable ? "Enabled." : "Disabled.",
-                UpdatedLocator = $"{hive}|{keyPath}|{updatedRawName}",
-            };
+            if (!enable) return Ok("Already disabled.", item.Locator);
+            var livePath = StartupPilotLogic.ParentOfAutorunsDisabledKey(keyPath);
+            var moveError = MoveRegistryValue(baseKey, keyPath, livePath, valueName);
+            if (moveError is not null) return moveError;
+            var liveApproved = StartupPilotLogic.StartupApprovedSubkeyForRegistryPath(livePath);
+            if (liveApproved is not null) WriteStartupApprovedState(hive, liveApproved, valueName, enable: true);
+            return Ok("Enabled.", StartupPilotLogic.FormatRegistryLocator(hive, livePath, valueName));
         }
 
-        var newName = enable ? rawName.TrimStart('!') : ("!" + rawName.TrimStart('!'));
-        if (newName == rawName) return new StartupActionResult { Success = true, Message = "Already in desired state." };
-        if (Array.Exists(key.GetValueNames(), name => string.Equals(name, newName, StringComparison.Ordinal)))
-            return new StartupActionResult
-            {
-                Success = false,
-                Message = $"A registry value named '{newName}' already exists; refusing to overwrite it.",
-            };
-
-        key.SetValue(newName, value, valueKind);
-        key.DeleteValue(rawName, throwOnMissingValue: false);
-        return new StartupActionResult
+        // 2. Run keys: Explorer honours StartupApproved, exactly like Task Manager. The value itself stays put.
+        var approvedSubkey = StartupPilotLogic.StartupApprovedSubkeyForRegistryPath(keyPath);
+        if (approvedSubkey is not null)
         {
-            Success = true,
-            Message = enable ? "Enabled." : "Disabled.",
-            UpdatedLocator = $"{hive}|{keyPath}|{newName}",
-        };
+            using var key = baseKey.OpenSubKey(keyPath, writable: false);
+            if (key is null) return Fail("Registry key not found.");
+            if (!HasValue(key, valueName)) return Fail("Registry value not found.");
+            WriteStartupApprovedState(hive, approvedSubkey, valueName, enable);
+            return Ok(enable ? "Enabled." : "Disabled.", item.Locator);
+        }
+
+        // 3. RunOnce keys have no StartupApproved support and Windows runs every value they contain
+        //    regardless of name, so the only way to disable one is to move it out of the key.
+        if (enable) return Ok("Already enabled.", item.Locator);
+        var parkedPath = StartupPilotLogic.AutorunsDisabledKeyFor(keyPath);
+        var error = MoveRegistryValue(baseKey, keyPath, parkedPath, valueName);
+        return error ?? Ok("Disabled.", StartupPilotLogic.FormatRegistryLocator(hive, parkedPath, valueName));
+    }
+
+    private static bool HasValue(RegistryKey key, string valueName) =>
+        Array.Exists(key.GetValueNames(), n => string.Equals(n, valueName, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>Moves a value between two keys of the same hive without expanding it or changing its kind. Returns an error result or null.</summary>
+    private static StartupActionResult? MoveRegistryValue(RegistryKey baseKey, string fromPath, string toPath, string valueName)
+    {
+        using var from = baseKey.OpenSubKey(fromPath, writable: true);
+        if (from is null) return Fail("Registry key not found.");
+        if (!HasValue(from, valueName)) return Fail("Registry value not found.");
+
+        var data = from.GetValue(valueName, null, RegistryValueOptions.DoNotExpandEnvironmentNames);
+        if (data is null) return Fail("Registry value not found.");
+        var kind = from.GetValueKind(valueName);
+
+        using var to = baseKey.CreateSubKey(toPath, writable: true)
+            ?? throw new InvalidOperationException($"Could not open {toPath}.");
+        if (HasValue(to, valueName))
+            return Fail($"A value named '{valueName}' already exists under {toPath}; refusing to overwrite it.");
+
+        to.SetValue(valueName, data, kind);
+        from.DeleteValue(valueName, throwOnMissingValue: false);
+        return null;
     }
 
     private StartupActionResult ToggleStartupFolder(StartupItem item, bool enable)
     {
-        var lnk = item.Locator;
-        if (string.IsNullOrEmpty(lnk)) return new StartupActionResult { Success = false, Message = "Empty shortcut path." };
-        var dir = Path.GetDirectoryName(lnk) ?? string.Empty;
-        if (string.IsNullOrEmpty(dir)) return new StartupActionResult { Success = false, Message = "No directory for shortcut." };
-        if (!File.Exists(lnk)) return new StartupActionResult { Success = false, Message = "Shortcut not found." };
+        var file = item.Locator;
+        if (string.IsNullOrEmpty(file)) return Fail("Empty shortcut path.");
+        var dir = Path.GetDirectoryName(file) ?? string.Empty;
+        if (string.IsNullOrEmpty(dir)) return Fail("No directory for shortcut.");
+        if (!File.Exists(file)) return Fail("Startup file not found.");
 
         bool isDisabled = string.Equals(Path.GetFileName(dir), "Disabled", StringComparison.OrdinalIgnoreCase);
+        var fileName = Path.GetFileName(file);
 
         if (enable && isDisabled)
         {
             var parent = Directory.GetParent(dir)?.FullName;
-            if (string.IsNullOrEmpty(parent) || !IsKnownStartupFolder(parent))
-                return new StartupActionResult { Success = false, Message = "Disabled shortcut isn't inside a known startup folder; refusing to move." };
-            if (!TryGetStartupFolderApprovedHive(parent, out var hive))
-                return new StartupActionResult { Success = false, Message = "Unknown startup folder scope." };
+            if (string.IsNullOrEmpty(parent) || !TryGetStartupFolderApprovedHive(parent, out var hive))
+                return Fail("Disabled entry isn't inside a known startup folder; refusing to move.");
             if (hive == RegistryHive.LocalMachine && !IsAdmin())
-                return new StartupActionResult { Success = false, NeedsElevation = true, Message = "Editing all-users startup approval requires administrator." };
-            var dest = Path.Combine(parent, Path.GetFileName(lnk));
+                return Elevate("Editing the all-users startup folder requires administrator.");
+            var dest = Path.Combine(parent, fileName);
             if (File.Exists(dest))
-                return new StartupActionResult { Success = false, Message = "A shortcut with that name already exists; refusing to overwrite it." };
-            File.Move(lnk, dest);
-            WriteStartupApprovedState(hive, "StartupFolder", Path.GetFileName(dest), enable: true);
-            return new StartupActionResult { Success = true, Message = "Enabled.", UpdatedLocator = dest };
+                return Fail("A file with that name already exists in the startup folder; refusing to overwrite it.");
+            File.Move(file, dest);
+            WriteStartupApprovedState(hive, "StartupFolder", fileName, enable: true);
+            return Ok("Enabled.", dest);
         }
-        if (!enable && !isDisabled)
-        {
-            if (!IsKnownStartupFolder(dir))
-                return new StartupActionResult { Success = false, Message = "Shortcut isn't inside a known startup folder; refusing to move." };
-            if (!TryGetStartupFolderApprovedHive(dir, out var hive))
-                return new StartupActionResult { Success = false, Message = "Unknown startup folder scope." };
-            if (hive == RegistryHive.LocalMachine && !IsAdmin())
-                return new StartupActionResult { Success = false, NeedsElevation = true, Message = "Editing all-users startup approval requires administrator." };
-            WriteStartupApprovedState(hive, "StartupFolder", Path.GetFileName(lnk), enable: false);
-            return new StartupActionResult { Success = true, Message = "Disabled.", UpdatedLocator = lnk };
-        }
-        if (enable && !isDisabled)
+        if (!isDisabled)
         {
             if (!TryGetStartupFolderApprovedHive(dir, out var hive))
-                return new StartupActionResult { Success = false, Message = "Unknown startup folder scope." };
+                return Fail("Entry isn't inside a known startup folder; refusing to change it.");
             if (hive == RegistryHive.LocalMachine && !IsAdmin())
-                return new StartupActionResult { Success = false, NeedsElevation = true, Message = "Editing all-users startup approval requires administrator." };
-            WriteStartupApprovedState(hive, "StartupFolder", Path.GetFileName(lnk), enable: true);
-            return new StartupActionResult { Success = true, Message = "Enabled.", UpdatedLocator = lnk };
+                return Elevate("Editing all-users startup approval requires administrator.");
+            WriteStartupApprovedState(hive, "StartupFolder", fileName, enable);
+            return Ok(enable ? "Enabled." : "Disabled.", file);
         }
-        return new StartupActionResult { Success = true, Message = "Already in desired state.", UpdatedLocator = lnk };
-    }
-
-    private static bool IsKnownStartupFolder(string path)
-    {
-        var perUser  = Environment.GetFolderPath(Environment.SpecialFolder.Startup);
-        var allUsers = Environment.GetFolderPath(Environment.SpecialFolder.CommonStartup);
-        return string.Equals(Path.TrimEndingDirectorySeparator(path), Path.TrimEndingDirectorySeparator(perUser),  StringComparison.OrdinalIgnoreCase)
-            || string.Equals(Path.TrimEndingDirectorySeparator(path), Path.TrimEndingDirectorySeparator(allUsers), StringComparison.OrdinalIgnoreCase);
+        return Ok("Already in desired state.", file);
     }
 
     private static bool TryGetStartupFolderApprovedHive(string path, out RegistryHive hive)
@@ -188,12 +172,12 @@ public sealed class StartupController
         var perUser  = Environment.GetFolderPath(Environment.SpecialFolder.Startup);
         var allUsers = Environment.GetFolderPath(Environment.SpecialFolder.CommonStartup);
         var normalized = Path.TrimEndingDirectorySeparator(path);
-        if (string.Equals(normalized, Path.TrimEndingDirectorySeparator(perUser), StringComparison.OrdinalIgnoreCase))
+        if (perUser.Length > 0 && string.Equals(normalized, Path.TrimEndingDirectorySeparator(perUser), StringComparison.OrdinalIgnoreCase))
         {
             hive = RegistryHive.CurrentUser;
             return true;
         }
-        if (string.Equals(normalized, Path.TrimEndingDirectorySeparator(allUsers), StringComparison.OrdinalIgnoreCase))
+        if (allUsers.Length > 0 && string.Equals(normalized, Path.TrimEndingDirectorySeparator(allUsers), StringComparison.OrdinalIgnoreCase))
         {
             hive = RegistryHive.LocalMachine;
             return true;
@@ -206,24 +190,28 @@ public sealed class StartupController
     {
         using var ts = new TaskService();
         using var task = ts.GetTask(item.Locator);
-        if (task is null) return new StartupActionResult { Success = false, Message = "Task not found." };
+        if (task is null) return Fail("Task not found.");
         try
         {
             task.Enabled = enable;
-            return new StartupActionResult { Success = true, Message = enable ? "Enabled." : "Disabled." };
+            return Ok(enable ? "Enabled." : "Disabled.");
         }
         catch (UnauthorizedAccessException)
         {
-            return new StartupActionResult { Success = false, NeedsElevation = true, Message = "Toggling this task requires administrator." };
+            return Elevate("Toggling this task requires administrator.");
+        }
+        catch (System.Runtime.InteropServices.COMException ex) when ((uint)ex.HResult == 0x80070005)
+        {
+            return Elevate("Toggling this task requires administrator.");
         }
     }
 
     public StartupActionResult SetServiceStartupType(StartupItem item, ServiceStartupType startupType)
     {
         if (item.Source != StartupSource.Service)
-            return new StartupActionResult { Success = false, Message = "Item is not a service." };
+            return Fail("Item is not a service.");
         if (!IsAdmin())
-            return new StartupActionResult { Success = false, NeedsElevation = true, Message = "Editing service start type requires administrator." };
+            return Elevate("Editing service start type requires administrator.");
 
         var scStartType = startupType switch
         {
@@ -233,11 +221,11 @@ public sealed class StartupController
             _ => string.Empty,
         };
         if (string.IsNullOrEmpty(scStartType))
-            return new StartupActionResult { Success = false, Message = "Unknown service startup type." };
+            return Fail("Unknown service startup type.");
 
         var psi = new ProcessStartInfo
         {
-            FileName = "sc.exe",
+            FileName = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "sc.exe"),
             UseShellExecute = false,
             CreateNoWindow = true,
             RedirectStandardOutput = true,
@@ -250,10 +238,10 @@ public sealed class StartupController
         try
         {
             using var proc = Process.Start(psi);
-            if (proc is null) return new StartupActionResult { Success = false, Message = "Could not invoke sc.exe." };
+            if (proc is null) return Fail("Could not invoke sc.exe.");
 
             // Read both streams asynchronously *before* waiting, so a child process that fills
-            // either pipe buffer can't deadlock us. WhenAll completes after the process exits.
+            // either pipe buffer can't deadlock us. The reads complete once the pipes close.
             var stdoutTask = proc.StandardOutput.ReadToEndAsync();
             var stderrTask = proc.StandardError.ReadToEndAsync();
 
@@ -261,10 +249,9 @@ public sealed class StartupController
             if (!exited)
             {
                 try { proc.Kill(entireProcessTree: true); } catch { }
-                return new StartupActionResult { Success = false, Message = "sc.exe timed out." };
+                return Fail("sc.exe timed out.");
             }
 
-            // The streams complete once the process exits and the pipes close.
             string outp = string.Empty, err = string.Empty;
             try { outp = stdoutTask.GetAwaiter().GetResult(); } catch { }
             try { err  = stderrTask.GetAwaiter().GetResult(); } catch { }
@@ -273,14 +260,14 @@ public sealed class StartupController
             {
                 var msg = string.Concat(err, outp).Trim();
                 if (msg.Length == 0) msg = $"sc.exe exit code {proc.ExitCode}.";
-                return new StartupActionResult { Success = false, Message = "sc.exe failed: " + msg };
+                return Fail("sc.exe failed: " + msg);
             }
-            return new StartupActionResult { Success = true, Message = $"Service set to {StartupTypeLabel(startupType)}." };
+            return Ok($"Service set to {StartupTypeLabel(startupType)}.");
         }
         catch (Exception ex)
         {
             _log.Error("sc.exe", ex);
-            return new StartupActionResult { Success = false, Message = ex.Message };
+            return Fail(ex.Message);
         }
     }
 
@@ -292,27 +279,12 @@ public sealed class StartupController
         _ => "Unknown",
     };
 
-    private static string? StartupApprovedSubkeyForRegistryPath(string runKeyPath)
-    {
-        if (runKeyPath.Equals(@"Software\Microsoft\Windows\CurrentVersion\Run", StringComparison.OrdinalIgnoreCase))
-            return "Run";
-        if (runKeyPath.Equals(@"Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Run", StringComparison.OrdinalIgnoreCase))
-            return "Run32";
-        return null;
-    }
-
     private static void WriteStartupApprovedState(RegistryHive hive, string approvedSubkey, string valueName, bool enable)
     {
-        using var baseKey = RegistryKey.OpenBaseKey(hive,
-            hive == RegistryHive.LocalMachine ? RegistryView.Registry64 : RegistryView.Default);
-        using var key = baseKey.CreateSubKey($@"{StartupApprovedRoot}\{approvedSubkey}", writable: true)
+        using var baseKey = OpenBase(hive);
+        using var key = baseKey.CreateSubKey($@"{StartupPilotLogic.StartupApprovedRoot}\{approvedSubkey}", writable: true)
             ?? throw new InvalidOperationException("Could not open StartupApproved key.");
-
-        var data = new byte[12];
-        BitConverter.GetBytes(enable ? 2 : 3).CopyTo(data, 0);
-        if (!enable)
-            BitConverter.GetBytes(DateTime.Now.ToFileTimeUtc()).CopyTo(data, 4);
-        key.SetValue(valueName, data, RegistryValueKind.Binary);
+        key.SetValue(valueName, StartupPilotLogic.BuildStartupApprovedBlob(enable), RegistryValueKind.Binary);
     }
 
     private static bool IsAdmin()

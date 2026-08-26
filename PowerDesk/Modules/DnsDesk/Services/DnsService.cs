@@ -1,10 +1,14 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Net;
-using System.Net.Sockets;
 using System.Net.NetworkInformation;
+using System.Net.Sockets;
+using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using PowerDesk.Core.Logging;
 using PowerDesk.Modules.DnsDesk.Models;
@@ -14,6 +18,11 @@ namespace PowerDesk.Modules.DnsDesk.Services;
 public sealed class DnsService
 {
     private static readonly TimeSpan ProcessTimeout = TimeSpan.FromSeconds(15);
+
+    // netsh/ipconfig write their (possibly localized) output in the OEM code page, not UTF-8.
+    // Decoding with the wrong encoding turns failure text into mojibake, so resolve it once.
+    private static readonly Encoding? ConsoleEncoding = ResolveConsoleEncoding();
+
     private readonly ILogger _log;
 
     public DnsService(ILogger log)
@@ -21,12 +30,26 @@ public sealed class DnsService
         _log = log;
     }
 
+    /// <summary>
+    /// Enumerates physical/virtual adapters (loopback and tunnels excluded) with their DNS servers,
+    /// gateways and IPv6 usability. Safe to call from a background thread.
+    /// </summary>
     public IReadOnlyList<DnsAdapter> GetAdapters()
     {
         var adapters = new List<DnsAdapter>();
-        foreach (var adapter in NetworkInterface.GetAllNetworkInterfaces())
+        NetworkInterface[] interfaces;
+        try { interfaces = NetworkInterface.GetAllNetworkInterfaces(); }
+        catch (Exception ex)
+        {
+            _log.Error("DNS adapter enumeration", ex);
+            throw;
+        }
+
+        foreach (var adapter in interfaces)
         {
             if (adapter.NetworkInterfaceType is NetworkInterfaceType.Loopback or NetworkInterfaceType.Tunnel)
+                continue;
+            if (string.IsNullOrWhiteSpace(adapter.Name))
                 continue;
 
             IPInterfaceProperties props;
@@ -37,29 +60,13 @@ public sealed class DnsService
                 continue;
             }
 
-            var ipv4Dns = props.DnsAddresses
-                .Where(a => a.AddressFamily == AddressFamily.InterNetwork)
-                .Select(a => a.ToString())
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
-            var ipv6Dns = props.DnsAddresses
-                .Where(a => a.AddressFamily == AddressFamily.InterNetworkV6)
-                .Select(a => a.ToString())
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
-            var supportsIpv4 = adapter.Supports(NetworkInterfaceComponent.IPv4);
-            var supportsIpv6 = adapter.Supports(NetworkInterfaceComponent.IPv6);
-            var ipv6Unicast = props.UnicastAddresses
-                .Select(a => a.Address)
-                .Where(a => a.AddressFamily == AddressFamily.InterNetworkV6)
-                .ToList();
-            var usableIpv6 = adapter.OperationalStatus == OperationalStatus.Up &&
-                ipv6Unicast.Any(IsUsableIpv6Address);
-            var gateways = props.GatewayAddresses
-                .Select(g => g.Address?.ToString())
-                .Where(s => !string.IsNullOrWhiteSpace(s))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
+            bool supportsIpv4 = false, supportsIpv6 = false;
+            try { supportsIpv4 = adapter.Supports(NetworkInterfaceComponent.IPv4); } catch { }
+            try { supportsIpv6 = adapter.Supports(NetworkInterfaceComponent.IPv6); } catch { }
+
+            var dns = SafeList(() => props.DnsAddresses);
+            var unicast = SafeList(() => props.UnicastAddresses).Select(a => a.Address).Where(a => a is not null).ToList();
+            var gateways = SafeList(() => props.GatewayAddresses).Select(g => g.Address).Where(a => a is not null).ToList();
 
             adapters.Add(new DnsAdapter
             {
@@ -68,12 +75,12 @@ public sealed class DnsService
                 Description = adapter.Description,
                 InterfaceType = adapter.NetworkInterfaceType,
                 Status = adapter.OperationalStatus,
-                Ipv4DnsServers = ipv4Dns.Count == 0 ? "-" : string.Join(", ", ipv4Dns),
-                Ipv6DnsServers = ipv6Dns.Count == 0 ? "-" : string.Join(", ", ipv6Dns),
-                GatewayAddresses = gateways.Count == 0 ? "-" : string.Join(", ", gateways),
+                Ipv4DnsServers = DnsLogic.FormatAddresses(dns, AddressFamily.InterNetwork),
+                Ipv6DnsServers = DnsLogic.FormatAddresses(dns, AddressFamily.InterNetworkV6),
+                GatewayAddresses = FormatGateways(gateways),
                 HasIpv4 = supportsIpv4,
                 HasIpv6 = supportsIpv6,
-                HasUsableIpv6 = usableIpv6,
+                HasUsableIpv6 = supportsIpv6 && DnsLogic.HasUsableIpv6(adapter.OperationalStatus, unicast, gateways),
             });
         }
 
@@ -83,110 +90,47 @@ public sealed class DnsService
             .ToList();
     }
 
+    /// <summary>
+    /// Applies a DNS profile via netsh. Runs each planned step in order and stops at the first
+    /// failure, returning the exact netsh text so the user can see what went wrong.
+    /// </summary>
     public async Task<(bool Success, string Message)> ApplyProfileAsync(DnsAdapter adapter, DnsProfile profile)
     {
-        var messages = new List<string>();
-        var changed = false;
+        var plan = DnsLogic.PlanApply(adapter, profile);
+        if (plan.Error is not null) return (false, plan.Error);
 
-        if (profile.UseDhcp)
+        var done = new List<string>();
+        foreach (var step in plan.Steps)
         {
-            if (adapter.HasIpv4)
+            var result = await RunNetshAsync(step.Args);
+            if (!result.Success)
             {
-                var ipv4 = await RunNetshAsync("interface", "ipv4", "set", "dnsservers", $"name={adapter.Name}", "source=dhcp");
-                if (!ipv4.Success) return ipv4;
-                changed = true;
+                var prefix = done.Count == 0 ? string.Empty : $" (already applied: {string.Join(", ", done)})";
+                return (false, $"{step.Label} failed{prefix}: {result.Message}");
             }
-            if (adapter.HasIpv6)
-            {
-                var ipv6 = await RunNetshAsync("interface", "ipv6", "set", "dnsservers", $"name={adapter.Name}", "source=dhcp");
-                if (!ipv6.Success) return ipv6;
-                changed = true;
-            }
-            return changed
-                ? (true, $"Set DNS to automatic for {adapter.Name}.")
-                : (false, "Selected adapter has no IPv4 or IPv6 stack to configure.");
+            done.Add(step.Label);
         }
 
-        if (adapter.HasIpv4 && !string.IsNullOrWhiteSpace(profile.Ipv4Primary))
-        {
-            var first = await RunNetshAsync(
-                "interface", "ipv4", "set", "dnsservers",
-                $"name={adapter.Name}",
-                "source=static",
-                $"address={profile.Ipv4Primary}",
-                "register=primary",
-                "validate=no");
-            if (!first.Success) return first;
-
-            if (!string.IsNullOrWhiteSpace(profile.Ipv4Secondary))
-            {
-                var second = await RunNetshAsync(
-                    "interface", "ipv4", "add", "dnsservers",
-                    $"name={adapter.Name}",
-                    $"address={profile.Ipv4Secondary}",
-                    "index=2",
-                    "validate=no");
-                if (!second.Success) return second;
-            }
-            changed = true;
-            messages.Add("IPv4");
-        }
-        else if (adapter.HasIpv4)
-        {
-            messages.Add("IPv4 skipped: profile has no IPv4 DNS");
-        }
-
-        if (adapter.HasUsableIpv6 && !string.IsNullOrWhiteSpace(profile.Ipv6Primary))
-        {
-            var first = await RunNetshAsync(
-                "interface", "ipv6", "set", "dnsservers",
-                $"name={adapter.Name}",
-                "source=static",
-                $"address={profile.Ipv6Primary}",
-                "validate=no");
-            if (!first.Success) return first;
-
-            if (!string.IsNullOrWhiteSpace(profile.Ipv6Secondary))
-            {
-                var second = await RunNetshAsync(
-                    "interface", "ipv6", "add", "dnsservers",
-                    $"name={adapter.Name}",
-                    $"address={profile.Ipv6Secondary}",
-                    "index=2",
-                    "validate=no");
-                if (!second.Success) return second;
-            }
-            changed = true;
-            messages.Add("IPv6");
-        }
-        else if (adapter.HasIpv6)
-        {
-            messages.Add(adapter.HasUsableIpv6 ? "IPv6 skipped: profile has no IPv6 DNS" : "IPv6 skipped: no routable IPv6 address");
-        }
-
-        if (!changed)
-            return (false, "No matching usable IP stack was found for that DNS profile.");
-
-        return (true, $"Applied '{profile.Name}' to {adapter.Name}: {string.Join(", ", messages)}.");
+        return (true, DnsLogic.DescribeSuccess(adapter, profile, plan));
     }
 
     public async Task<(bool Success, string Message)> FlushDnsAsync()
     {
-        var result = await RunProcessAsync("ipconfig.exe", "/flushdns");
-        return result.ExitCode == 0
-            ? (true, "DNS resolver cache flushed.")
-            : (false, string.IsNullOrWhiteSpace(result.Error) ? result.Output : result.Error);
+        var result = await RunProcessAsync(SystemTool("ipconfig.exe"), "/flushdns");
+        if (result.ExitCode == 0) return (true, "DNS resolver cache flushed.");
+        var message = FirstNonEmpty(result.Error, result.Output);
+        return (false, string.IsNullOrWhiteSpace(message) ? $"ipconfig exited with code {result.ExitCode}." : message);
     }
 
     private async Task<(bool Success, string Message)> RunNetshAsync(params string[] args)
     {
-        var result = await RunProcessAsync("netsh.exe", args);
+        var result = await RunProcessAsync(SystemTool("netsh.exe"), args);
         if (result.ExitCode == 0) return (true, result.Output.Trim());
-        var message = string.IsNullOrWhiteSpace(result.Error) ? result.Output : result.Error;
-        return (false, string.IsNullOrWhiteSpace(message) ? $"netsh exited with {result.ExitCode}." : message.Trim());
+        var message = FirstNonEmpty(result.Error, result.Output);
+        return (false, string.IsNullOrWhiteSpace(message) ? $"netsh exited with code {result.ExitCode}." : message);
     }
 
-    private static async Task<(int ExitCode, string Output, string Error)> RunProcessAsync(string fileName, params string[] args)
+    private async Task<(int ExitCode, string Output, string Error)> RunProcessAsync(string fileName, params string[] args)
     {
         var psi = new ProcessStartInfo(fileName)
         {
@@ -194,26 +138,89 @@ public sealed class DnsService
             CreateNoWindow = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
+            StandardOutputEncoding = ConsoleEncoding,
+            StandardErrorEncoding = ConsoleEncoding,
         };
         foreach (var arg in args) psi.ArgumentList.Add(arg);
 
-        using var process = Process.Start(psi);
-        if (process is null) return (-1, string.Empty, "Could not start process.");
-        var outputTask = process.StandardOutput.ReadToEndAsync();
-        var errorTask = process.StandardError.ReadToEndAsync();
-        var waitTask = process.WaitForExitAsync();
-        if (await Task.WhenAny(waitTask, Task.Delay(ProcessTimeout)) != waitTask)
+        Process? process;
+        try { process = Process.Start(psi); }
+        catch (Exception ex)
         {
-            try { process.Kill(entireProcessTree: true); } catch { }
-            return (-2, string.Empty, $"{fileName} timed out.");
+            _log.Error($"Start {fileName}", ex);
+            return (-1, string.Empty, $"Could not start {Path.GetFileName(fileName)}: {ex.Message}");
         }
-        return (process.ExitCode, await outputTask, await errorTask);
+        if (process is null) return (-1, string.Empty, $"Could not start {Path.GetFileName(fileName)}.");
+
+        using (process)
+        {
+            var outputTask = process.StandardOutput.ReadToEndAsync();
+            var errorTask = process.StandardError.ReadToEndAsync();
+            using var cts = new CancellationTokenSource(ProcessTimeout);
+            try
+            {
+                await process.WaitForExitAsync(cts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                try { process.Kill(entireProcessTree: true); } catch { }
+                _log.Warn($"{Path.GetFileName(fileName)} {string.Join(' ', args)} timed out after {ProcessTimeout.TotalSeconds:0}s.");
+                return (-2, string.Empty, $"{Path.GetFileName(fileName)} did not finish within {ProcessTimeout.TotalSeconds:0} seconds.");
+            }
+            var output = await outputTask;
+            var error = await errorTask;
+            if (process.ExitCode != 0)
+                _log.Warn($"{Path.GetFileName(fileName)} {string.Join(' ', args)} exited {process.ExitCode}: {FirstNonEmpty(error, output)}");
+            return (process.ExitCode, output, error);
+        }
     }
 
-    private static bool IsUsableIpv6Address(IPAddress address) =>
-        !address.IsIPv6LinkLocal &&
-        !address.IsIPv6Multicast &&
-        !address.IsIPv6SiteLocal &&
-        !IPAddress.IPv6Loopback.Equals(address) &&
-        !IPAddress.IPv6None.Equals(address);
+    /// <summary>Full path under the Windows system directory so a broken PATH cannot hide the tool.</summary>
+    private static string SystemTool(string exe)
+    {
+        try
+        {
+            var candidate = Path.Combine(Environment.SystemDirectory, exe);
+            if (File.Exists(candidate)) return candidate;
+        }
+        catch { }
+        return exe;
+    }
+
+    private static string FirstNonEmpty(string a, string b) =>
+        !string.IsNullOrWhiteSpace(a) ? CollapseWhitespace(a) : CollapseWhitespace(b);
+
+    private static string CollapseWhitespace(string text) =>
+        string.Join(" ", (text ?? string.Empty)
+            .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+
+    private static string FormatGateways(IEnumerable<IPAddress> gateways)
+    {
+        var list = gateways
+            .Where(g => !IPAddress.Any.Equals(g) && !IPAddress.IPv6Any.Equals(g))
+            .Select(g => g.ToString())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        return list.Count == 0 ? "-" : string.Join(", ", list);
+    }
+
+    private static List<T> SafeList<T>(Func<IEnumerable<T>> get)
+    {
+        try { return get().ToList(); }
+        catch { return new List<T>(); }
+    }
+
+    private static Encoding? ResolveConsoleEncoding()
+    {
+        try
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+            var codePage = CultureInfo.CurrentCulture.TextInfo.OEMCodePage;
+            return codePage > 0 ? Encoding.GetEncoding(codePage) : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
 }

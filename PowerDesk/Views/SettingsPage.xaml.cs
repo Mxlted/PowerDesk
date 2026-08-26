@@ -241,17 +241,12 @@ public partial class SettingsPage : UserControl
                 try { File.Delete(f); } catch { }
             }
 
-            // Relaunch so every module re-initializes from a clean slate.
-            try
-            {
-                var exe = Process.GetCurrentProcess().MainModule?.FileName;
-                if (!string.IsNullOrEmpty(exe))
-                    Process.Start(new ProcessStartInfo { FileName = exe, UseShellExecute = true });
-            }
-            catch (Exception ex) { app.Logger.Error("Reset relaunch", ex); }
-
             app.Status.Set("Local data reset. Restarting…", StatusKind.Warning);
             app.SkipShutdownPersistenceOnce();
+            // Relaunch so every module re-initializes from a clean slate. RelaunchSelf hands the
+            // single-instance lock over, so the new copy does not see "already running".
+            if (!app.RelaunchSelf(elevated: false))
+                app.Logger.Warn("Reset: relaunch could not be started; exiting instead.");
             app.Shell?.ForceClose();
         }
         catch (Exception ex)

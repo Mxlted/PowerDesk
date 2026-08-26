@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text;
 using PowerDesk.Core.Services;
 using PowerDesk.Modules.WindowSizer.Models;
@@ -10,7 +11,9 @@ namespace PowerDesk.Modules.WindowSizer.Services;
 
 /// <summary>
 /// Win32-backed enumeration and manipulation of top-level visible windows.
-/// All methods are tolerant of HWNDs that have gone away mid-call.
+/// All geometry is expressed as the <em>visible</em> frame (DWM extended frame bounds) in physical pixels, so
+/// snapping and layouts line up edge-to-edge without the invisible resize borders Windows 10/11 add.
+/// All methods are tolerant of HWNDs that have gone away mid-call and may be called from any thread.
 /// </summary>
 public sealed class WindowService
 {
@@ -18,9 +21,15 @@ public sealed class WindowService
 
     public WindowService(IconService icons) => _icons = icons;
 
+    public enum SnapEdge { Left, Right, Top, Bottom }
+
     public List<WindowInfo> EnumerateWindows(IntPtr selfHwnd)
     {
         var list = new List<WindowInfo>(64);
+        var processCache = new Dictionary<int, (string Name, string Exe)>();
+        int selfPid = Environment.ProcessId;
+
+        using var dpi = PhysicalPixelScope.Enter();
 
         EnumWindows((hWnd, _) =>
         {
@@ -28,48 +37,38 @@ public sealed class WindowService
             {
                 if (!IsRelevantWindow(hWnd, selfHwnd)) return true;
 
-                var titleLen = GetWindowTextLength(hWnd);
-                if (titleLen <= 0) return true;
-
-                var sb = new StringBuilder(titleLen + 1);
-                GetWindowText(hWnd, sb, sb.Capacity);
-                var title = sb.ToString();
+                var title = GetTitle(hWnd);
                 if (string.IsNullOrWhiteSpace(title)) return true;
 
                 GetWindowThreadProcessId(hWnd, out var pid);
-                if (pid == Environment.ProcessId) return true;
-                string proc = "";
-                string exe  = "";
-                try
+                if (pid == 0 || pid == selfPid) return true;
+
+                if (!processCache.TryGetValue(pid, out var proc))
                 {
-                    using var p = Process.GetProcessById(pid);
-                    proc = p.ProcessName;
-                    try { exe = p.MainModule?.FileName ?? string.Empty; } catch { }
+                    proc = DescribeProcess(pid);
+                    processCache[pid] = proc;
                 }
-                catch { }
 
-                if (string.Equals(proc, "PowerDesk", StringComparison.OrdinalIgnoreCase)) return true;
-
-                GetWindowRect(hWnd, out var rect);
-
-                var ex = GetWindowLong(hWnd, GWL_EXSTYLE);
+                var rect = GetVisibleBounds(hWnd);
+                var ex = GetWindowLongPtr(hWnd, GWL_EXSTYLE);
                 var topmost = (ex & WS_EX_TOPMOST) != 0;
-                var monitorName = GetMonitorName(hWnd);
 
                 list.Add(new WindowInfo
                 {
                     Handle = hWnd,
                     Title = title,
-                    ProcessName = proc,
-                    ExePath = exe,
+                    ProcessName = proc.Name,
+                    ExePath = proc.Exe,
                     ProcessId = pid,
                     X = rect.Left,
                     Y = rect.Top,
                     Width = rect.Width,
                     Height = rect.Height,
                     IsTopmost = topmost,
-                    Monitor = monitorName,
-                    Icon = _icons.GetIcon(exe),
+                    IsMinimized = IsIconic(hWnd),
+                    IsMaximized = IsZoomed(hWnd),
+                    Monitor = GetMonitorName(hWnd),
+                    Icon = _icons.GetIcon(proc.Exe),
                 });
             }
             catch { /* skip individual window */ }
@@ -79,20 +78,93 @@ public sealed class WindowService
         return list;
     }
 
+    private static string GetTitle(IntPtr hWnd)
+    {
+        var len = GetWindowTextLength(hWnd);
+        if (len <= 0) return string.Empty;
+        var sb = new StringBuilder(len + 1);
+        GetWindowText(hWnd, sb, sb.Capacity);
+        return sb.ToString();
+    }
+
+    private static string GetClassNameSafe(IntPtr hWnd)
+    {
+        try
+        {
+            var sb = new StringBuilder(256);
+            return GetClassName(hWnd, sb, sb.Capacity) > 0 ? sb.ToString() : string.Empty;
+        }
+        catch { return string.Empty; }
+    }
+
+    /// <summary>
+    /// Resolves process name and image path via QueryFullProcessImageName, which works for elevated processes
+    /// where <c>Process.MainModule</c> throws. Falls back to <see cref="Process"/> for the name only.
+    /// </summary>
+    private static (string Name, string Exe) DescribeProcess(int pid)
+    {
+        string exe = string.Empty;
+        IntPtr h = IntPtr.Zero;
+        try
+        {
+            h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+            if (h != IntPtr.Zero)
+            {
+                var sb = new StringBuilder(1024);
+                int size = sb.Capacity;
+                if (QueryFullProcessImageName(h, 0, sb, ref size)) exe = sb.ToString(0, size);
+            }
+        }
+        catch { }
+        finally
+        {
+            if (h != IntPtr.Zero) { try { CloseHandle(h); } catch { } }
+        }
+
+        var name = WindowSizerLogic.ProcessNameFromPath(exe);
+        if (name.Length == 0)
+        {
+            try
+            {
+                using var p = Process.GetProcessById(pid);
+                name = p.ProcessName;
+            }
+            catch { }
+        }
+        return (name, exe);
+    }
+
+    private static bool IsCloaked(IntPtr hWnd)
+    {
+        try
+        {
+            return DwmGetWindowAttribute(hWnd, DWMWA_CLOAKED, out int cloaked, sizeof(int)) == 0 && cloaked != 0;
+        }
+        catch { return false; }
+    }
+
     private static bool IsRelevantWindow(IntPtr hWnd, IntPtr selfHwnd)
     {
         if (hWnd == IntPtr.Zero) return false;
         if (hWnd == selfHwnd) return false;
         if (!IsWindow(hWnd)) return false;
         if (!IsWindowVisible(hWnd)) return false;
+        if (IsCloaked(hWnd)) return false; // suspended UWP apps, windows on other virtual desktops
 
-        var ex = GetWindowLong(hWnd, GWL_EXSTYLE);
-        if ((ex & WS_EX_TOOLWINDOW) != 0 && (ex & WS_EX_APPWINDOW) == 0) return false;
-
+        var ex = GetWindowLongPtr(hWnd, GWL_EXSTYLE);
         var owner = GetWindow(hWnd, GW_OWNER);
-        if (owner != IntPtr.Zero && (ex & WS_EX_APPWINDOW) == 0) return false;
+        if (!WindowSizerLogic.IsAltTabEligible(ex, owner != IntPtr.Zero)) return false;
+
+        if (WindowSizerLogic.IsShellClass(GetClassNameSafe(hWnd))) return false;
 
         return true;
+    }
+
+    /// <summary>True if the handle still refers to a live window.</summary>
+    public bool IsAlive(IntPtr hWnd)
+    {
+        try { return hWnd != IntPtr.Zero && IsWindow(hWnd); }
+        catch { return false; }
     }
 
     public bool CanManageWindow(IntPtr hWnd, IntPtr selfHwnd)
@@ -102,7 +174,7 @@ public sealed class WindowService
             if (!IsRelevantWindow(hWnd, selfHwnd)) return false;
             if (GetWindowTextLength(hWnd) <= 0) return false;
             GetWindowThreadProcessId(hWnd, out var pid);
-            return pid != Environment.ProcessId;
+            return pid != 0 && pid != Environment.ProcessId;
         }
         catch
         {
@@ -110,109 +182,175 @@ public sealed class WindowService
         }
     }
 
-    public void MoveAndResize(IntPtr hWnd, int x, int y, int w, int h)
+    // ---------- geometry ----------
+
+    /// <summary>Visible frame bounds (physical pixels). Falls back to GetWindowRect when DWM has no answer.</summary>
+    public RECT GetVisibleBounds(IntPtr hWnd)
+    {
+        using var dpi = PhysicalPixelScope.Enter();
+        return GetVisibleBoundsCore(hWnd);
+    }
+
+    private static RECT GetVisibleBoundsCore(IntPtr hWnd)
+    {
+        if (!GetWindowRect(hWnd, out var wr)) return default;
+        var insets = GetFrameInsetsCore(hWnd, wr);
+        return new RECT(wr.Left + insets.Left, wr.Top + insets.Top, wr.Right - insets.Right, wr.Bottom - insets.Bottom);
+    }
+
+    private static WindowSizerLogic.FrameInsets GetFrameInsetsCore(IntPtr hWnd, RECT windowRect)
     {
         try
         {
+            int hr = DwmGetWindowAttribute(hWnd, DWMWA_EXTENDED_FRAME_BOUNDS, out RECT frame, Marshal.SizeOf<RECT>());
+            if (hr != 0) return WindowSizerLogic.FrameInsets.Zero;
+            return WindowSizerLogic.ComputeInsets(windowRect, frame);
+        }
+        catch { return WindowSizerLogic.FrameInsets.Zero; }
+    }
+
+    /// <summary>
+    /// Moves/resizes so that the window's <em>visible</em> frame occupies (x, y, w, h). Restores minimized or
+    /// maximized windows first, since SetWindowPos on a maximized window leaves it in a broken half-state.
+    /// Returns false when the window no longer exists or Windows refused the call.
+    /// </summary>
+    public bool MoveAndResize(IntPtr hWnd, int x, int y, int w, int h)
+    {
+        try
+        {
+            if (!IsAlive(hWnd)) return false;
+            using var dpi = PhysicalPixelScope.Enter();
+
+            if (IsIconic(hWnd) || IsZoomed(hWnd)) ShowWindow(hWnd, SW_RESTORE);
+
+            if (!GetWindowRect(hWnd, out var wr)) return false;
+            var insets = GetFrameInsetsCore(hWnd, wr);
+            var target = WindowSizerLogic.ToWindowRect(x, y, w, h, insets);
+            return SetWindowPos(hWnd, IntPtr.Zero, target.Left, target.Top, target.Width, target.Height,
+                                SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+        catch { return false; }
+    }
+
+    public bool BringToFront(IntPtr hWnd)
+    {
+        try
+        {
+            if (!IsAlive(hWnd)) return false;
             if (IsIconic(hWnd)) ShowWindow(hWnd, SW_RESTORE);
-            if (IsZoomed(hWnd)) ShowWindow(hWnd, SW_RESTORE);
-            MoveWindow(hWnd, x, y, Math.Max(50, w), Math.Max(50, h), true);
+            return SetForegroundWindow(hWnd);
         }
-        catch { }
+        catch { return false; }
     }
 
-    public void BringToFront(IntPtr hWnd)
+    public bool SetTopmost(IntPtr hWnd, bool topmost)
     {
         try
         {
-            if (IsIconic(hWnd)) ShowWindow(hWnd, SW_RESTORE);
-            SetForegroundWindow(hWnd);
+            if (!IsAlive(hWnd)) return false;
+            return SetWindowPos(hWnd, topmost ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0,
+                                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
         }
-        catch { }
+        catch { return false; }
     }
 
-    public void SetTopmost(IntPtr hWnd, bool topmost)
+    public bool Maximize(IntPtr hWnd)
+    {
+        try { if (!IsAlive(hWnd)) return false; ShowWindow(hWnd, SW_MAXIMIZE); return true; } catch { return false; }
+    }
+
+    public bool Restore(IntPtr hWnd)
+    {
+        try { if (!IsAlive(hWnd)) return false; ShowWindow(hWnd, SW_RESTORE); return true; } catch { return false; }
+    }
+
+    public bool Center(IntPtr hWnd)
     {
         try
         {
-            SetWindowPos(hWnd, topmost ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            if (!IsAlive(hWnd)) return false;
+            using var dpi = PhysicalPixelScope.Enter();
+            if (!TryGetWorkAreaCore(hWnd, out var work)) return false;
+
+            if (IsIconic(hWnd) || IsZoomed(hWnd)) ShowWindow(hWnd, SW_RESTORE);
+            var bounds = GetVisibleBoundsCore(hWnd);
+            if (bounds.Width <= 0 || bounds.Height <= 0) return false;
+
+            var (x, y) = WindowSizerLogic.CenterOrigin(work, bounds.Width, bounds.Height);
+            return MoveAndResize(hWnd, x, y, bounds.Width, bounds.Height);
         }
-        catch { }
+        catch { return false; }
     }
 
-    public void Maximize(IntPtr hWnd)
+    public bool Snap(IntPtr hWnd, SnapEdge edge)
     {
-        try { ShowWindow(hWnd, SW_MAXIMIZE); } catch { }
-    }
-
-    public void Restore(IntPtr hWnd)
-    {
-        try { ShowWindow(hWnd, SW_RESTORE); } catch { }
-    }
-
-    public void Center(IntPtr hWnd)
-    {
-        if (!TryGetWorkAreaFor(hWnd, out var work)) return;
-        if (!GetWindowRect(hWnd, out var rect)) return;
-
-        int w = rect.Width, h = rect.Height;
-        int x = work.Left + (work.Width - w) / 2;
-        int y = work.Top + (work.Height - h) / 2;
-        MoveAndResize(hWnd, x, y, w, h);
-    }
-
-    public enum SnapEdge { Left, Right, Top, Bottom }
-
-    public void Snap(IntPtr hWnd, SnapEdge edge)
-    {
-        if (!TryGetWorkAreaFor(hWnd, out var work)) return;
-        int x = work.Left, y = work.Top, w = work.Width, h = work.Height;
-        switch (edge)
+        try
         {
-            case SnapEdge.Left:   w = work.Width / 2; break;
-            case SnapEdge.Right:  x = work.Left + work.Width / 2; w = work.Width - work.Width / 2; break;
-            case SnapEdge.Top:    h = work.Height / 2; break;
-            case SnapEdge.Bottom: y = work.Top + work.Height / 2; h = work.Height - work.Height / 2; break;
+            if (!IsAlive(hWnd)) return false;
+            using var dpi = PhysicalPixelScope.Enter();
+            if (!TryGetWorkAreaCore(hWnd, out var work)) return false;
+            var r = WindowSizerLogic.SnapRect(work, edge);
+            return MoveAndResize(hWnd, r.Left, r.Top, r.Width, r.Height);
         }
-        MoveAndResize(hWnd, x, y, w, h);
+        catch { return false; }
     }
 
-    public void MoveToNextMonitor(IntPtr hWnd)
+    public bool MoveToNextMonitor(IntPtr hWnd)
     {
-        var monitors = EnumerateMonitorWorkAreas();
-        if (monitors.Count <= 1) return;
+        try
+        {
+            if (!IsAlive(hWnd)) return false;
+            using var dpi = PhysicalPixelScope.Enter();
 
-        var current = MonitorFromWindow(hWnd, MONITOR_DEFAULTTONEAREST);
-        int currentIdx = monitors.FindIndex(m => m.handle == current);
-        if (currentIdx < 0) currentIdx = 0;
-        int nextIdx = (currentIdx + 1) % monitors.Count;
-        var fromInfo = monitors[currentIdx];
-        var toInfo = monitors[nextIdx];
+            var monitors = EnumerateMonitorWorkAreas();
+            if (monitors.Count <= 1) return false;
 
-        if (!GetWindowRect(hWnd, out var rect)) return;
+            var current = MonitorFromWindow(hWnd, MONITOR_DEFAULTTONEAREST);
+            int currentIdx = monitors.FindIndex(m => m.handle == current);
+            if (currentIdx < 0) currentIdx = 0;
+            var fromInfo = monitors[currentIdx];
+            var toInfo = monitors[(currentIdx + 1) % monitors.Count];
 
-        // Translate origin from old work-area to new work-area, keep size.
-        int relX = rect.Left - fromInfo.work.Left;
-        int relY = rect.Top - fromInfo.work.Top;
-        int newX = toInfo.work.Left + Math.Min(relX, Math.Max(0, toInfo.work.Width - rect.Width));
-        int newY = toInfo.work.Top  + Math.Min(relY, Math.Max(0, toInfo.work.Height - rect.Height));
-        MoveAndResize(hWnd, newX, newY, rect.Width, rect.Height);
+            bool wasMaximized = IsZoomed(hWnd);
+            if (IsIconic(hWnd) || wasMaximized) ShowWindow(hWnd, SW_RESTORE);
+
+            var bounds = GetVisibleBoundsCore(hWnd);
+            if (bounds.Width <= 0 || bounds.Height <= 0) return false;
+
+            var target = WindowSizerLogic.TranslateToWorkArea(bounds, fromInfo.work, toInfo.work);
+            bool ok = MoveAndResize(hWnd, target.Left, target.Top, target.Width, target.Height);
+            if (ok && wasMaximized) ShowWindow(hWnd, SW_MAXIMIZE);
+            return ok;
+        }
+        catch { return false; }
     }
+
+    // ---------- monitors ----------
 
     public static string GetMonitorName(IntPtr hWnd)
     {
-        var mon = MonitorFromWindow(hWnd, MONITOR_DEFAULTTONEAREST);
-        if (mon == IntPtr.Zero) return string.Empty;
-        var info = new MONITORINFOEX { cbSize = System.Runtime.InteropServices.Marshal.SizeOf<MONITORINFOEX>() };
-        return GetMonitorInfo(mon, ref info) ? info.szDevice : string.Empty;
+        try
+        {
+            var mon = MonitorFromWindow(hWnd, MONITOR_DEFAULTTONEAREST);
+            if (mon == IntPtr.Zero) return string.Empty;
+            var info = new MONITORINFOEX { cbSize = Marshal.SizeOf<MONITORINFOEX>() };
+            return GetMonitorInfo(mon, ref info) ? WindowSizerLogic.FriendlyMonitorName(info.szDevice) : string.Empty;
+        }
+        catch { return string.Empty; }
     }
 
     public static bool TryGetWorkAreaFor(IntPtr hWnd, out RECT work)
     {
+        using var dpi = PhysicalPixelScope.Enter();
+        return TryGetWorkAreaCore(hWnd, out work);
+    }
+
+    private static bool TryGetWorkAreaCore(IntPtr hWnd, out RECT work)
+    {
         work = default;
         var mon = MonitorFromWindow(hWnd, MONITOR_DEFAULTTONEAREST);
         if (mon == IntPtr.Zero) return false;
-        var info = new MONITORINFOEX { cbSize = System.Runtime.InteropServices.Marshal.SizeOf<MONITORINFOEX>() };
+        var info = new MONITORINFOEX { cbSize = Marshal.SizeOf<MONITORINFOEX>() };
         if (!GetMonitorInfo(mon, ref info)) return false;
         work = info.rcWork;
         return true;
@@ -221,12 +359,17 @@ public sealed class WindowService
     public List<(IntPtr handle, RECT work)> EnumerateMonitorWorkAreas()
     {
         var list = new List<(IntPtr, RECT)>();
-        EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, (IntPtr h, IntPtr _, ref RECT _, IntPtr _) =>
+        try
         {
-            var info = new MONITORINFOEX { cbSize = System.Runtime.InteropServices.Marshal.SizeOf<MONITORINFOEX>() };
-            if (GetMonitorInfo(h, ref info)) list.Add((h, info.rcWork));
-            return true;
-        }, IntPtr.Zero);
+            using var dpi = PhysicalPixelScope.Enter();
+            EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, (IntPtr h, IntPtr _, ref RECT _, IntPtr _) =>
+            {
+                var info = new MONITORINFOEX { cbSize = Marshal.SizeOf<MONITORINFOEX>() };
+                if (GetMonitorInfo(h, ref info)) list.Add((h, info.rcWork));
+                return true;
+            }, IntPtr.Zero);
+        }
+        catch { }
         return list;
     }
 }

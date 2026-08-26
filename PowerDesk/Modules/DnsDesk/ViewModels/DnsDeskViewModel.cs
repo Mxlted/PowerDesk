@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading.Tasks;
@@ -19,6 +20,7 @@ public sealed partial class DnsDeskViewModel : ObservableObject
     private readonly RecentActionsService _recent;
     private readonly PermissionService _permissions;
     private readonly DnsService _dns;
+    private int _refreshing;
 
     public ObservableCollection<DnsAdapter> Adapters { get; } = new();
     public ObservableCollection<DnsProfile> Profiles { get; } = new()
@@ -48,16 +50,44 @@ public sealed partial class DnsDeskViewModel : ObservableObject
             Ipv6Primary = "2620:fe::fe",
             Ipv6Secondary = "2620:fe::9",
         },
+        new DnsProfile
+        {
+            Name = "OpenDNS",
+            Ipv4Primary = "208.67.222.222",
+            Ipv4Secondary = "208.67.220.220",
+            Ipv6Primary = "2620:119:35::35",
+            Ipv6Secondary = "2620:119:53::53",
+        },
+        new DnsProfile { Name = "Custom", IsCustom = true },
     };
 
-    [ObservableProperty] private DnsAdapter? _selectedAdapter;
-    [ObservableProperty] private DnsProfile? _selectedProfile;
-    [ObservableProperty] private bool _isBusy;
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(ApplyProfileCommand))]
+    private DnsAdapter? _selectedAdapter;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(ApplyProfileCommand))]
+    [NotifyPropertyChangedFor(nameof(IsCustomProfile))]
+    private DnsProfile? _selectedProfile;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(ApplyProfileCommand))]
+    [NotifyCanExecuteChangedFor(nameof(FlushDnsCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RefreshCommand))]
+    private bool _isBusy;
+
     [ObservableProperty] private DateTime? _lastRefresh;
 
+    [ObservableProperty] private string _customIpv4Primary = string.Empty;
+    [ObservableProperty] private string _customIpv4Secondary = string.Empty;
+    [ObservableProperty] private string _customIpv6Primary = string.Empty;
+    [ObservableProperty] private string _customIpv6Secondary = string.Empty;
+
     public bool IsAdmin => _permissions.IsAdministrator;
+    public bool IsCustomProfile => SelectedProfile?.IsCustom == true;
     public int AdapterCount => Adapters.Count;
     public int OnlineCount => Adapters.Count(a => a.IsUp);
+    public bool HasAdapters => Adapters.Count > 0;
 
     public DnsDeskViewModel(
         ILogger log,
@@ -73,34 +103,54 @@ public sealed partial class DnsDeskViewModel : ObservableObject
         SelectedProfile = Profiles.FirstOrDefault();
     }
 
-    public void Initialize() => Refresh();
+    /// <summary>Kicks off the first adapter scan. Safe to call more than once.</summary>
+    public void Initialize() => _ = RefreshAsync();
 
-    [RelayCommand]
-    public void Refresh()
+    private bool CanRefresh() => !IsBusy;
+
+    [RelayCommand(CanExecute = nameof(CanRefresh))]
+    public async Task RefreshAsync()
     {
+        // Adapter enumeration can take a noticeable time; keep the UI responsive and skip overlapping scans.
+        if (Interlocked.Exchange(ref _refreshing, 1) == 1) return;
+        IsBusy = true;
         try
         {
-            var previous = SelectedAdapter?.Id;
-            Adapters.Clear();
-            foreach (var adapter in _dns.GetAdapters()) Adapters.Add(adapter);
-            SelectedAdapter = Adapters.FirstOrDefault(a => string.Equals(a.Id, previous, StringComparison.OrdinalIgnoreCase))
-                ?? Adapters.FirstOrDefault();
-            LastRefresh = DateTime.Now;
-            OnPropertyChanged(nameof(AdapterCount));
-            OnPropertyChanged(nameof(OnlineCount));
-            _status.Set($"DnsDesk found {Adapters.Count} adapter(s).", StatusKind.Success);
+            var adapters = await Task.Run(() => _dns.GetAdapters());
+            UiDispatcher.Invoke(() => ApplyAdapters(adapters));
+            _status.Set($"DnsDesk found {adapters.Count} adapter(s), {adapters.Count(a => a.IsUp)} online.", StatusKind.Success);
         }
         catch (Exception ex)
         {
             _log.Error("DnsDesk refresh", ex);
-            _status.Set("DnsDesk refresh failed. See logs.", StatusKind.Error);
+            _status.Set($"DnsDesk refresh failed: {ex.Message}", StatusKind.Error);
+        }
+        finally
+        {
+            IsBusy = false;
+            Interlocked.Exchange(ref _refreshing, 0);
         }
     }
 
-    [RelayCommand]
+    private void ApplyAdapters(IReadOnlyList<DnsAdapter> adapters)
+    {
+        var previous = SelectedAdapter?.Id;
+        Adapters.Clear();
+        foreach (var adapter in adapters) Adapters.Add(adapter);
+        SelectedAdapter = DnsLogic.SelectAfterRefresh(adapters, previous);
+        LastRefresh = DateTime.Now;
+        OnPropertyChanged(nameof(AdapterCount));
+        OnPropertyChanged(nameof(OnlineCount));
+        OnPropertyChanged(nameof(HasAdapters));
+    }
+
+    private bool CanApplyProfile() => !IsBusy && IsAdmin && SelectedAdapter is not null && SelectedProfile is not null;
+
+    [RelayCommand(CanExecute = nameof(CanApplyProfile))]
     private async Task ApplyProfileAsync()
     {
-        if (SelectedAdapter is null)
+        var adapter = SelectedAdapter;
+        if (adapter is null)
         {
             _status.Set("Select a network adapter first.", StatusKind.Warning);
             return;
@@ -116,31 +166,44 @@ public sealed partial class DnsDeskViewModel : ObservableObject
             return;
         }
 
+        var profile = BuildEffectiveProfile();
+        var errors = DnsLogic.ValidateProfile(profile);
+        if (errors.Count > 0)
+        {
+            _status.Set($"Cannot apply '{profile.Name}': {string.Join(" ", errors)}", StatusKind.Warning);
+            return;
+        }
+
+        string message;
+        StatusKind kind;
         IsBusy = true;
         try
         {
-            var result = await _dns.ApplyProfileAsync(SelectedAdapter, SelectedProfile);
-            if (!result.Success)
-            {
-                _status.Set(result.Message, StatusKind.Error);
-                return;
-            }
-            _recent.Add("DnsDesk", $"Applied {SelectedProfile.Name} to {SelectedAdapter.Name}.");
-            _status.Set(result.Message, StatusKind.Success);
-            Refresh();
+            var result = await _dns.ApplyProfileAsync(adapter, profile);
+            message = result.Message;
+            kind = result.Success ? StatusKind.Success : StatusKind.Error;
+            if (result.Success) _recent.Add("DnsDesk", $"Applied {profile.Name} DNS to {adapter.Name}.");
         }
         catch (Exception ex)
         {
             _log.Error("Apply DNS profile", ex);
-            _status.Set("DNS profile change failed. See logs.", StatusKind.Error);
+            message = $"DNS profile change failed: {ex.Message}";
+            kind = StatusKind.Error;
         }
         finally
         {
             IsBusy = false;
         }
+
+        // Re-read adapter state so the grid reflects whatever netsh actually applied (even on a
+        // partial failure), then surface the apply outcome rather than the refresh message.
+        await RefreshAsync();
+        _status.Set(message, kind);
     }
 
-    [RelayCommand]
+    private bool CanFlushDns() => !IsBusy;
+
+    [RelayCommand(CanExecute = nameof(CanFlushDns))]
     private async Task FlushDnsAsync()
     {
         IsBusy = true;
@@ -153,7 +216,7 @@ public sealed partial class DnsDeskViewModel : ObservableObject
         catch (Exception ex)
         {
             _log.Error("Flush DNS", ex);
-            _status.Set("DNS flush failed. See logs.", StatusKind.Error);
+            _status.Set($"DNS flush failed: {ex.Message}", StatusKind.Error);
         }
         finally
         {
@@ -171,5 +234,24 @@ public sealed partial class DnsDeskViewModel : ObservableObject
         }
         if (!_permissions.TryRelaunchAsAdmin()) _status.Set("Elevation cancelled.", StatusKind.Warning);
         else App.Instance.Shell?.ForceClose();
+    }
+
+    /// <summary>
+    /// The profile that will actually be applied: the selected preset, or a normalized copy of the
+    /// custom addresses typed into the view.
+    /// </summary>
+    internal DnsProfile BuildEffectiveProfile()
+    {
+        var selected = SelectedProfile ?? Profiles[0];
+        if (!selected.IsCustom) return DnsLogic.Normalize(selected);
+        return DnsLogic.Normalize(new DnsProfile
+        {
+            Name = "Custom",
+            IsCustom = true,
+            Ipv4Primary = CustomIpv4Primary,
+            Ipv4Secondary = CustomIpv4Secondary,
+            Ipv6Primary = CustomIpv6Primary,
+            Ipv6Secondary = CustomIpv6Secondary,
+        });
     }
 }

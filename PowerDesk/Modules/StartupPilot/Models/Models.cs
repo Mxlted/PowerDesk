@@ -36,6 +36,9 @@ public sealed partial class StartupItem : ObservableObject
     [ObservableProperty] private BitmapSource? _icon;
     [ObservableProperty] private ServiceStartupType _serviceStartupType = ServiceStartupType.Unknown;
 
+    /// <summary>True when changing this item needs elevation the current process does not have (set by the view model).</summary>
+    [ObservableProperty] private bool _needsElevation;
+
     public string StatusLabel => Source == StartupSource.Service ? StartupTypeLabel : (Enabled ? "Enabled" : "Disabled");
 
     public string StartupTypeLabel => ServiceStartupType switch

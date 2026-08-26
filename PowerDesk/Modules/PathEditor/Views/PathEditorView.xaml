@@ -4,8 +4,35 @@
              xmlns:m="clr-namespace:PowerDesk.Modules.PathEditor.Models"
              Background="{DynamicResource SurfaceBaseBrush}"
              Foreground="{DynamicResource TextPrimaryBrush}">
+    <UserControl.Resources>
+        <Style x:Key="EntryCellText" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="Consolas"/>
+            <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+        <Style x:Key="ExistsCellText" TargetType="TextBlock">
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsMissing}" Value="True">
+                    <Setter Property="Foreground" Value="{DynamicResource WarningBrush}"/>
+                    <Setter Property="FontWeight" Value="SemiBold"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="DuplicateCellText" TargetType="TextBlock">
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsDuplicate}" Value="True">
+                    <Setter Property="Foreground" Value="{DynamicResource DangerBrush}"/>
+                    <Setter Property="FontWeight" Value="SemiBold"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+    </UserControl.Resources>
+
     <Grid Margin="32,24">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
@@ -15,69 +42,111 @@
             <StackPanel DockPanel.Dock="Left">
                 <TextBlock Style="{StaticResource TextDisplay}" Text="PathEditor"/>
                 <TextBlock Style="{StaticResource TextCaption}" Margin="0,4,0,0"
-                           Text="Review and edit User or Machine PATH entries with validation."/>
+                           Text="Review and edit User or Machine PATH entries with validation and backups."/>
+                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                    <Border Style="{StaticResource Pill}"
+                            Visibility="{Binding ShowAdminHint, Converter={StaticResource BoolToVis}}">
+                        <TextBlock Style="{StaticResource TextCaption}" Foreground="{DynamicResource WarningBrush}"
+                                   Text="Administrator required to save the Machine PATH"/>
+                    </Border>
+                    <Border Style="{StaticResource Pill}" Margin="0,0,6,0"
+                            Visibility="{Binding IsDirty, Converter={StaticResource BoolToVis}}">
+                        <TextBlock Style="{StaticResource TextCaption}" Foreground="{DynamicResource InfoBrush}"
+                                   Text="Unsaved changes"/>
+                    </Border>
+                </StackPanel>
             </StackPanel>
-            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-                <Button Content="Copy PATH" Command="{Binding CopyRawPathCommand}"/>
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Top">
+                <Button Content="Copy PATH" Command="{Binding CopyRawPathCommand}"
+                        ToolTip="Copy the edited PATH string to the clipboard"/>
                 <Button Content="Relaunch as administrator" Margin="8,0,0,0"
                         Command="{Binding RelaunchAsAdminCommand}"
+                        ToolTip="Restart PowerDesk elevated so the Machine PATH can be saved"
                         Visibility="{Binding IsAdmin, Converter={StaticResource InverseBoolToVis}}"/>
-                <Button Content="Reload" Margin="8,0,0,0" Command="{Binding LoadPathCommand}"/>
-                <Button Content="Save" Margin="8,0,0,0" Style="{StaticResource PrimaryButton}" Command="{Binding SavePathCommand}"/>
+                <Button Content="Reload" Margin="8,0,0,0" Command="{Binding LoadPathCommand}"
+                        ToolTip="Re-read the PATH from the registry, discarding unsaved edits (F5)"/>
+                <Button Content="Save" Margin="8,0,0,0" Style="{StaticResource PrimaryButton}" Command="{Binding SavePathCommand}"
+                        ToolTip="Write the edited PATH to the registry (a backup of the current value is kept)"/>
             </StackPanel>
         </DockPanel>
 
-        <Grid Grid.Row="1" Margin="0,16,0,16">
+        <Grid Grid.Row="1" Margin="0,16,0,4">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
             <WrapPanel Grid.Column="0">
-                <Border Style="{StaticResource Card}" Width="160" Margin="0,0,12,12">
+                <Border Style="{StaticResource Card}" MinWidth="150" Margin="0,0,12,12">
                     <StackPanel>
                         <TextBlock Text="Entries" Style="{StaticResource TextCaption}"/>
                         <TextBlock Text="{Binding EntryCount}" Style="{StaticResource TextTitle}"/>
                     </StackPanel>
                 </Border>
-                <Border Style="{StaticResource Card}" Width="160" Margin="0,0,12,12">
+                <Border Style="{StaticResource Card}" MinWidth="150" Margin="0,0,12,12">
                     <StackPanel>
                         <TextBlock Text="Missing" Style="{StaticResource TextCaption}"/>
                         <TextBlock Text="{Binding MissingCount}" Style="{StaticResource TextTitle}" Foreground="{DynamicResource WarningBrush}"/>
                     </StackPanel>
                 </Border>
-                <Border Style="{StaticResource Card}" Width="160" Margin="0,0,12,12">
+                <Border Style="{StaticResource Card}" MinWidth="150" Margin="0,0,12,12">
                     <StackPanel>
                         <TextBlock Text="Duplicates" Style="{StaticResource TextCaption}"/>
                         <TextBlock Text="{Binding DuplicateCount}" Style="{StaticResource TextTitle}" Foreground="{DynamicResource DangerBrush}"/>
                     </StackPanel>
                 </Border>
             </WrapPanel>
-            <Border Grid.Column="1" Style="{StaticResource Card}" Padding="14,12">
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+            <Border Grid.Column="1" Style="{StaticResource Card}" Margin="0,0,0,12" VerticalAlignment="Top">
+                <WrapPanel VerticalAlignment="Center">
                     <TextBlock Text="Scope" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,8,0"/>
-                    <ComboBox Width="140" SelectedValuePath="Tag" SelectedValue="{Binding SelectedScope}">
+                    <ComboBox Width="140" SelectedValuePath="Tag" SelectedValue="{Binding SelectedScope}"
+                              AutomationProperties.Name="PATH scope"
+                              ToolTip="User PATH applies to your account; Machine PATH applies to everyone and needs administrator rights">
                         <ComboBoxItem Content="User" Tag="{x:Static m:PathScope.User}"/>
                         <ComboBoxItem Content="Machine" Tag="{x:Static m:PathScope.Machine}"/>
                     </ComboBox>
-                    <Button Content="Validate" Margin="12,0,0,0" Command="{Binding ValidateEntriesCommand}"/>
-                </StackPanel>
+                    <Button Content="Validate" Margin="12,0,0,0" Command="{Binding ValidateEntriesCommand}"
+                            ToolTip="Check which folders exist and flag duplicate entries"/>
+                    <TextBlock Style="{StaticResource TextCaption}" VerticalAlignment="Center" Margin="12,0,0,0"
+                               Text="{Binding LastLoaded, StringFormat='Loaded {0:HH:mm:ss}', TargetNullValue='Not loaded'}"/>
+                </WrapPanel>
             </Border>
         </Grid>
 
-        <Grid Grid.Row="2">
+        <ProgressBar Grid.Row="2" IsIndeterminate="True" Height="3" Margin="0,0,0,12"
+                     Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}"/>
+
+        <Grid Grid.Row="3">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*" MinWidth="320"/>
                 <ColumnDefinition Width="380"/>
             </Grid.ColumnDefinitions>
 
             <Border Grid.Column="0" Style="{StaticResource Card}" Padding="0">
-                <DataGrid ItemsSource="{Binding Entries}" SelectedItem="{Binding SelectedEntry}" IsReadOnly="True">
-                    <DataGrid.Columns>
-                        <DataGridTextColumn Header="Entry" Binding="{Binding Value}" Width="*"/>
-                        <DataGridTextColumn Header="Exists" Binding="{Binding MissingLabel}" Width="90"/>
-                        <DataGridTextColumn Header="Duplicate" Binding="{Binding DuplicateLabel}" Width="110"/>
-                    </DataGrid.Columns>
-                </DataGrid>
+                <Grid>
+                    <DataGrid ItemsSource="{Binding Entries}" SelectedItem="{Binding SelectedEntry}" IsReadOnly="True"
+                              SelectionMode="Single" AutomationProperties.Name="PATH entries">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Entry" Binding="{Binding Value}" Width="*" MinWidth="160"
+                                                ElementStyle="{StaticResource EntryCellText}"/>
+                            <DataGridTextColumn Header="Exists" Binding="{Binding MissingLabel}" Width="100"
+                                                ElementStyle="{StaticResource ExistsCellText}"/>
+                            <DataGridTextColumn Header="Duplicate" Binding="{Binding DuplicateLabel}" Width="100"
+                                                ElementStyle="{StaticResource DuplicateCellText}"/>
+                        </DataGrid.Columns>
+                        <DataGrid.InputBindings>
+                            <KeyBinding Key="Delete" Command="{Binding RemoveSelectedEntryCommand}"/>
+                            <KeyBinding Key="Up" Modifiers="Alt" Command="{Binding MoveSelectedUpCommand}"/>
+                            <KeyBinding Key="Down" Modifiers="Alt" Command="{Binding MoveSelectedDownCommand}"/>
+                        </DataGrid.InputBindings>
+                    </DataGrid>
+                    <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Margin="24"
+                                Visibility="{Binding HasEntries, Converter={StaticResource InverseBoolToVis}}">
+                        <TextBlock Text="This PATH has no entries" Style="{StaticResource TextSubtitle}"
+                                   Foreground="{DynamicResource TextSecondaryBrush}" HorizontalAlignment="Center"/>
+                        <TextBlock Style="{StaticResource TextCaption}" HorizontalAlignment="Center" Margin="0,6,0,0" TextWrapping="Wrap"
+                                   Text="Add a folder on the right, or restore a backup from the Backups tab."/>
+                    </StackPanel>
+                </Grid>
             </Border>
 
             <Border Grid.Column="1" Margin="16,0,0,0">
@@ -91,21 +160,39 @@
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
-                                    <TextBox Grid.Column="0" Text="{Binding NewEntry, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas"/>
-                                    <Button Grid.Column="1" Content="Browse" Margin="8,0,0,0" Command="{Binding BrowseFolderCommand}"/>
+                                    <TextBox Grid.Column="0" Text="{Binding NewEntry, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas"
+                                             AutomationProperties.Name="New PATH folder"
+                                             ToolTip="Type or paste a folder path (%VARS% are allowed) and press Enter">
+                                        <TextBox.InputBindings>
+                                            <KeyBinding Key="Return" Command="{Binding AddEntryCommand}"/>
+                                        </TextBox.InputBindings>
+                                    </TextBox>
+                                    <Button Grid.Column="1" Content="Browse" Margin="8,0,0,0" Command="{Binding BrowseFolderCommand}"
+                                            ToolTip="Pick a folder"/>
                                 </Grid>
-                                <Button Content="Add" Margin="0,8,0,0" Command="{Binding AddEntryCommand}"/>
+                                <Button Content="Add" Margin="0,8,0,0" Command="{Binding AddEntryCommand}"
+                                        ToolTip="Append the folder to the end of the PATH (Enter)"/>
 
                                 <Border Background="{DynamicResource DividerBrush}" Height="1" Margin="0,18"/>
                                 <TextBlock Text="Selected entry" Style="{StaticResource TextSubtitle}"/>
-                                <TextBox Text="{Binding SelectedEntry.Value, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas"
-                                         TextWrapping="Wrap" Margin="0,10,0,0"/>
-                                <UniformGrid Columns="2" Margin="0,8,0,0">
-                                    <Button Content="Move up" Margin="0,0,4,0" Command="{Binding MoveSelectedUpCommand}"/>
-                                    <Button Content="Move down" Margin="4,0,0,0" Command="{Binding MoveSelectedDownCommand}"/>
-                                </UniformGrid>
-                                <Button Content="Remove selected" Style="{StaticResource DangerButton}" Margin="0,8,0,0"
-                                        Command="{Binding RemoveSelectedEntryCommand}"/>
+                                <TextBlock Text="Select a row in the list to edit, reorder or remove it." Style="{StaticResource TextCaption}"
+                                           Margin="0,6,0,0" TextWrapping="Wrap"
+                                           Visibility="{Binding SelectedEntry, Converter={StaticResource NullToVis}, ConverterParameter=invert}"/>
+                                <StackPanel Visibility="{Binding SelectedEntry, Converter={StaticResource NullToVis}}">
+                                    <TextBox Text="{Binding SelectedEntry.Value, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas"
+                                             TextWrapping="Wrap" Margin="0,10,0,0"
+                                             AutomationProperties.Name="Selected PATH entry"
+                                             ToolTip="Edit the selected entry in place"/>
+                                    <UniformGrid Columns="2" Margin="0,8,0,0">
+                                        <Button Content="Move up" Margin="0,0,4,0" Command="{Binding MoveSelectedUpCommand}"
+                                                ToolTip="Move the entry one position earlier (Alt+Up). Earlier entries win when names collide."/>
+                                        <Button Content="Move down" Margin="4,0,0,0" Command="{Binding MoveSelectedDownCommand}"
+                                                ToolTip="Move the entry one position later (Alt+Down)"/>
+                                    </UniformGrid>
+                                    <Button Content="Remove selected" Style="{StaticResource DangerButton}" Margin="0,8,0,0"
+                                            Command="{Binding RemoveSelectedEntryCommand}"
+                                            ToolTip="Remove the entry from the list (Delete). Nothing is written until you press Save."/>
+                                </StackPanel>
                             </StackPanel>
                         </ScrollViewer>
                     </TabItem>
@@ -114,27 +201,56 @@
                         <Border Style="{StaticResource Card}" Margin="0,12,0,0">
                             <TextBox Text="{Binding RawPath, Mode=OneWay}" IsReadOnly="True" FontFamily="Consolas"
                                      TextWrapping="Wrap" AcceptsReturn="True"
-                                     VerticalScrollBarVisibility="Auto"/>
+                                     VerticalScrollBarVisibility="Auto"
+                                     AutomationProperties.Name="Raw PATH value"
+                                     ToolTip="The exact string that Save will write"/>
                         </Border>
                     </TabItem>
 
                     <TabItem Header="Backups">
-                        <ListBox ItemsSource="{Binding Backups}" Margin="0,12,0,0">
-                            <ListBox.ItemTemplate>
-                                <DataTemplate>
-                                    <StackPanel>
-                                        <TextBlock>
-                                            <Run Text="{Binding Scope}"/>
-                                            <Run Text=" PATH"/>
-                                        </TextBlock>
-                                        <TextBlock Text="{Binding TimestampLabel}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11"/>
-                                    </StackPanel>
-                                </DataTemplate>
-                            </ListBox.ItemTemplate>
-                        </ListBox>
+                        <Grid Margin="0,12,0,0">
+                            <ListBox ItemsSource="{Binding Backups}" AutomationProperties.Name="PATH backups"
+                                     HorizontalContentAlignment="Stretch">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <DockPanel LastChildFill="True">
+                                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                                <Button Content="Restore" Style="{StaticResource GhostButton}"
+                                                        Command="{Binding DataContext.RestoreBackupCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                        CommandParameter="{Binding}"
+                                                        ToolTip="Load this backup into the editor. Nothing is written until you press Save."/>
+                                                <Button Content="Delete" Style="{StaticResource GhostButton}" Margin="4,0,0,0"
+                                                        Foreground="{DynamicResource DangerBrush}"
+                                                        Command="{Binding DataContext.DeleteBackupCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                        CommandParameter="{Binding}"
+                                                        ToolTip="Delete this backup"/>
+                                            </StackPanel>
+                                            <StackPanel VerticalAlignment="Center">
+                                                <TextBlock>
+                                                    <Run Text="{Binding Scope, Mode=OneWay}"/>
+                                                    <Run Text=" PATH"/>
+                                                </TextBlock>
+                                                <TextBlock Text="{Binding TimestampLabel}" Style="{StaticResource TextCaption}"/>
+                                            </StackPanel>
+                                        </DockPanel>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Margin="24"
+                                        Visibility="{Binding HasBackups, Converter={StaticResource InverseBoolToVis}}">
+                                <TextBlock Text="No backups yet" Style="{StaticResource TextSubtitle}"
+                                           Foreground="{DynamicResource TextSecondaryBrush}" HorizontalAlignment="Center"/>
+                                <TextBlock Style="{StaticResource TextCaption}" HorizontalAlignment="Center" Margin="0,6,0,0" TextWrapping="Wrap"
+                                           Text="A backup of the previous value is taken every time you save."/>
+                            </StackPanel>
+                        </Grid>
                     </TabItem>
                 </TabControl>
             </Border>
         </Grid>
     </Grid>
+    <UserControl.InputBindings>
+        <KeyBinding Key="F5" Command="{Binding LoadPathCommand}"/>
+        <KeyBinding Key="S" Modifiers="Control" Command="{Binding SavePathCommand}"/>
+    </UserControl.InputBindings>
 </UserControl>

@@ -16,6 +16,12 @@
         SnapsToDevicePixels="True"
         WindowStartupLocation="CenterScreen">
 
+    <Window.InputBindings>
+        <KeyBinding Key="F" Modifiers="Control" Command="{Binding FocusSearchCommand}"/>
+        <KeyBinding Key="D1" Modifiers="Control" Command="{Binding GoDashboardCommand}"/>
+        <KeyBinding Key="OemComma" Modifiers="Control" Command="{Binding GoSettingsCommand}"/>
+    </Window.InputBindings>
+
     <Grid>
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="240"/>
@@ -44,8 +50,9 @@
                 <Border DockPanel.Dock="Top" Margin="12,4,12,8">
                     <Grid>
                         <TextBox x:Name="SearchBox" Padding="10,7" TextChanged="SearchBox_TextChanged"
+                                 PreviewKeyDown="SearchBox_PreviewKeyDown"
                                  AutomationProperties.Name="Search tools"
-                                 ToolTip="Filter the tool list."/>
+                                 ToolTip="Filter the tool list (Ctrl+F). Enter opens the first match, Esc clears."/>
                         <!-- Watermark sits in front of an empty TextBox and is hidden once the user types or focuses. -->
                         <TextBlock x:Name="SearchPlaceholder"
                                    Text="Search tools…"

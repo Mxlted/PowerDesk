@@ -14,37 +14,58 @@
             <StackPanel DockPanel.Dock="Left">
                 <TextBlock Style="{StaticResource TextDisplay}" Text="HostProfiles"/>
                 <TextBlock Style="{StaticResource TextCaption}" Margin="0,4,0,0"
-                           Text="Save, edit, and apply local Windows hosts file profiles."/>
+                           Text="Save, edit, and apply local Windows hosts file profiles. A timestamped backup is taken before every apply."/>
             </StackPanel>
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-                <Button Content="Copy path" Command="{Binding CopyHostsPathCommand}"/>
+                <Border Style="{StaticResource Pill}" Margin="0,0,12,0"
+                        Visibility="{Binding IsAdmin, Converter={StaticResource InverseBoolToVis}}"
+                        ToolTip="Reading works without elevation; applying a profile writes to a protected system file.">
+                    <TextBlock Text="Administrator required to apply" Foreground="{DynamicResource WarningBrush}" FontSize="11"/>
+                </Border>
+                <Button Content="Copy path" Command="{Binding CopyHostsPathCommand}" ToolTip="Copy the hosts file path to the clipboard"/>
                 <Button Content="Relaunch as administrator" Margin="8,0,0,0"
                         Command="{Binding RelaunchAsAdminCommand}"
+                        ToolTip="Restart PowerDesk elevated so profiles can be applied"
                         Visibility="{Binding IsAdmin, Converter={StaticResource InverseBoolToVis}}"/>
-                <Button Content="Reload hosts" Margin="8,0,0,0" Style="{StaticResource PrimaryButton}" Command="{Binding LoadCurrentHostsCommand}"/>
+                <Button Content="Reload hosts" Margin="8,0,0,0" Style="{StaticResource PrimaryButton}" Command="{Binding LoadCurrentHostsCommand}"
+                        ToolTip="Re-read the Windows hosts file"/>
             </StackPanel>
         </DockPanel>
 
-        <WrapPanel Grid.Row="1" Margin="0,16,0,16">
-            <Border Style="{StaticResource Card}" Width="180" Margin="0,0,12,12">
+        <Grid Grid.Row="1" Margin="0,16,0,16">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Column="0" Style="{StaticResource Card}" MinWidth="150" Margin="0,0,12,0">
                 <StackPanel>
                     <TextBlock Text="Profiles" Style="{StaticResource TextCaption}"/>
                     <TextBlock Text="{Binding ProfileCount}" Style="{StaticResource TextTitle}"/>
                 </StackPanel>
             </Border>
-            <Border Style="{StaticResource Card}" Width="420" Margin="0,0,12,12">
+            <Border Grid.Column="1" Style="{StaticResource Card}" Margin="0,0,12,0">
                 <StackPanel>
                     <TextBlock Text="Hosts file" Style="{StaticResource TextCaption}"/>
-                    <TextBlock Text="{Binding HostsPath}" FontFamily="Consolas" TextTrimming="CharacterEllipsis"/>
+                    <TextBlock Text="{Binding HostsPath}" FontFamily="Consolas" TextTrimming="CharacterEllipsis" ToolTip="{Binding HostsPath}"/>
+                    <TextBlock Text="{Binding CurrentHostsSummary}" Style="{StaticResource TextCaption}" Margin="0,4,0,0" TextTrimming="CharacterEllipsis"/>
                 </StackPanel>
             </Border>
-            <Border Style="{StaticResource Card}" Width="220" Margin="0,0,12,12">
+            <Border Grid.Column="2" Style="{StaticResource Card}" MinWidth="170">
                 <StackPanel>
                     <TextBlock Text="Last loaded" Style="{StaticResource TextCaption}"/>
-                    <TextBlock Text="{Binding LastLoaded, StringFormat={}{0:HH:mm:ss}}" Style="{StaticResource TextTitle}" FontSize="16"/>
+                    <TextBlock Text="{Binding LastLoaded, StringFormat={}{0:HH:mm:ss}, TargetNullValue=-}" Style="{StaticResource TextTitle}" FontSize="16"/>
                 </StackPanel>
             </Border>
-        </WrapPanel>
+
+            <ProgressBar Grid.Row="1" Grid.ColumnSpan="3" IsIndeterminate="True" Height="3" Margin="0,12,0,0"
+                         Visibility="{Binding IsApplying, Converter={StaticResource BoolToVis}}"/>
+        </Grid>
 
         <Grid Grid.Row="2">
             <Grid.ColumnDefinitions>
@@ -56,65 +77,87 @@
                 <DockPanel>
                     <StackPanel DockPanel.Dock="Top">
                         <TextBlock Text="Profiles" Style="{StaticResource TextSubtitle}"/>
-                        <TextBox Text="{Binding NewProfileName, UpdateSourceTrigger=PropertyChanged}" Margin="0,10,0,0"/>
+                        <TextBox Text="{Binding NewProfileName, UpdateSourceTrigger=PropertyChanged}" Margin="0,10,0,0"
+                                 ToolTip="Optional name for a new profile (must be unique). Enter saves the current hosts file as a profile.">
+                            <TextBox.InputBindings>
+                                <KeyBinding Key="Return" Command="{Binding SaveCurrentAsProfileCommand}"/>
+                            </TextBox.InputBindings>
+                        </TextBox>
                         <UniformGrid Columns="2" Margin="0,8,0,12">
-                            <Button Content="Blank" Margin="0,0,4,0" Command="{Binding AddBlankProfileCommand}"/>
-                            <Button Content="From current" Margin="4,0,0,0" Command="{Binding SaveCurrentAsProfileCommand}"/>
+                            <Button Content="Blank" Margin="0,0,4,0" Command="{Binding AddBlankProfileCommand}"
+                                    ToolTip="Create a minimal profile with localhost entries"/>
+                            <Button Content="From current" Margin="4,0,0,0" Command="{Binding SaveCurrentAsProfileCommand}"
+                                    ToolTip="Snapshot the current Windows hosts file into a new profile"/>
                         </UniformGrid>
                     </StackPanel>
-                    <StackPanel DockPanel.Dock="Bottom">
-                        <Button Content="Delete" Style="{StaticResource DangerButton}" Command="{Binding DeleteSelectedProfileCommand}"/>
+                    <StackPanel DockPanel.Dock="Bottom" Margin="0,12,0,0">
+                        <Button Content="Delete" Style="{StaticResource DangerButton}" Command="{Binding DeleteSelectedProfileCommand}"
+                                ToolTip="Delete the selected profile (does not touch the hosts file)"/>
                     </StackPanel>
-                    <ListBox ItemsSource="{Binding Profiles}" SelectedItem="{Binding SelectedProfile}">
-                        <ListBox.ItemTemplate>
-                            <DataTemplate>
-                                <StackPanel>
-                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold"/>
-                                    <TextBlock Text="{Binding UpdatedLabel}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11"/>
-                                </StackPanel>
-                            </DataTemplate>
-                        </ListBox.ItemTemplate>
-                    </ListBox>
+                    <Grid>
+                        <ListBox ItemsSource="{Binding Profiles}" SelectedItem="{Binding SelectedProfile}"
+                                 Visibility="{Binding HasProfiles, Converter={StaticResource BoolToVis}}">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                        <TextBlock Text="{Binding UpdatedLabel}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11"/>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Margin="12"
+                                    Visibility="{Binding HasProfiles, Converter={StaticResource InverseBoolToVis}}">
+                            <TextBlock Text="No profiles yet" Style="{StaticResource TextSubtitle}" Foreground="{DynamicResource TextSecondaryBrush}" TextAlignment="Center"/>
+                            <TextBlock Text="Use From current to snapshot your hosts file, or Blank to start fresh."
+                                       Style="{StaticResource TextCaption}" Margin="0,6,0,0" TextAlignment="Center" TextWrapping="Wrap"/>
+                        </StackPanel>
+                    </Grid>
                 </DockPanel>
             </Border>
 
             <TabControl Grid.Column="1" Margin="16,0,0,0">
                 <TabItem Header="Profile">
                     <Grid Margin="0,12,0,0">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="*"/>
-                            <RowDefinition Height="Auto"/>
-                        </Grid.RowDefinitions>
-                        <Grid Visibility="{Binding SelectedProfile, Converter={StaticResource NullToVis}, ConverterParameter=invert}">
-                            <TextBlock Text="No profile selected" Style="{StaticResource TextSubtitle}" Foreground="{DynamicResource TextSecondaryBrush}"
-                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                        </Grid>
-                        <Grid Grid.RowSpan="3" Visibility="{Binding SelectedProfile, Converter={StaticResource NullToVis}}"
-                              DataContext="{Binding SelectedProfile}">
+                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
+                                    Visibility="{Binding SelectedProfile, Converter={StaticResource NullToVis}, ConverterParameter=invert}">
+                            <TextBlock Text="No profile selected" Style="{StaticResource TextSubtitle}" Foreground="{DynamicResource TextSecondaryBrush}" TextAlignment="Center"/>
+                            <TextBlock Text="Pick a profile on the left to edit or apply it." Style="{StaticResource TextCaption}" Margin="0,6,0,0" TextAlignment="Center"/>
+                        </StackPanel>
+                        <Grid Visibility="{Binding SelectedProfile, Converter={StaticResource NullToVis}}">
                             <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="*"/>
                                 <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
-                            <TextBox Grid.Row="0" Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}" FontWeight="SemiBold"/>
-                            <TextBox Grid.Row="1" Text="{Binding Content, UpdateSourceTrigger=PropertyChanged}"
-                                     AcceptsReturn="True" TextWrapping="NoWrap" FontFamily="Consolas"
+                            <TextBox Grid.Row="0" Text="{Binding SelectedProfile.Name, UpdateSourceTrigger=PropertyChanged}" FontWeight="SemiBold"
+                                     ToolTip="Profile name (must be unique)"/>
+                            <TextBlock Grid.Row="1" Text="{Binding SelectedProfileSummary}" Style="{StaticResource TextCaption}" Margin="0,6,0,0"/>
+                            <TextBox Grid.Row="2" Text="{Binding SelectedProfile.Content, UpdateSourceTrigger=PropertyChanged}"
+                                     AcceptsReturn="True" AcceptsTab="True" TextWrapping="NoWrap" FontFamily="Consolas"
                                      HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
-                                     Margin="0,10,0,0"/>
-                            <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
-                                <Button Content="Save" Command="{Binding DataContext.SaveSelectedProfileCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"/>
-                                <Button Content="Apply" Style="{StaticResource PrimaryButton}" Margin="8,0,0,0"
-                                        Command="{Binding DataContext.ApplySelectedProfileCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"/>
-                            </StackPanel>
+                                     Margin="0,8,0,0"
+                                     ToolTip="One entry per line: IP address, then one or more hostnames. Lines starting with # are comments."/>
+                            <DockPanel Grid.Row="3" Margin="0,12,0,0">
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                    <Button Content="Save" Command="{Binding SaveSelectedProfileCommand}" ToolTip="Persist edits to this profile"/>
+                                    <Button Content="Apply to hosts file" Style="{StaticResource PrimaryButton}" Margin="8,0,0,0"
+                                            Command="{Binding ApplySelectedProfileCommand}"
+                                            ToolTip="Back up the current hosts file, write this profile, and flush the DNS cache (requires administrator)"/>
+                                </StackPanel>
+                                <TextBlock Text="Line endings are normalized to CRLF and the file is written as UTF-8 without BOM."
+                                           Style="{StaticResource TextCaption}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                            </DockPanel>
                         </Grid>
                     </Grid>
                 </TabItem>
                 <TabItem Header="Current hosts">
                     <Border Style="{StaticResource Card}" Margin="0,12,0,0">
-                        <TextBox Text="{Binding CurrentHosts}" IsReadOnly="True"
+                        <TextBox Text="{Binding CurrentHosts, Mode=OneWay}" IsReadOnly="True"
                                  AcceptsReturn="True" TextWrapping="NoWrap" FontFamily="Consolas"
-                                 HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"/>
+                                 HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
+                                 ToolTip="Read-only view of the Windows hosts file as it is on disk now"/>
                     </Border>
                 </TabItem>
             </TabControl>

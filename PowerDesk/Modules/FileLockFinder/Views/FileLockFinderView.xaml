@@ -3,7 +3,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              Background="{DynamicResource SurfaceBaseBrush}"
              Foreground="{DynamicResource TextPrimaryBrush}">
-    <Grid Margin="32,24" AllowDrop="True" DragOver="Root_DragOver" Drop="Root_Drop">
+    <Grid Margin="32,24" AllowDrop="True" DragOver="Root_DragOver" Drop="Root_Drop" Background="Transparent">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
@@ -14,10 +14,16 @@
             <StackPanel DockPanel.Dock="Left">
                 <TextBlock Style="{StaticResource TextDisplay}" Text="FileLockFinder"/>
                 <TextBlock Style="{StaticResource TextCaption}" Margin="0,4,0,0"
-                           Text="Find processes that are holding file or folder handles."/>
+                           Text="Find processes that are holding file or folder handles. Drop a file or folder anywhere on this page."/>
             </StackPanel>
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                <Border Style="{StaticResource Pill}" Margin="0,0,12,0"
+                        Visibility="{Binding IsAdmin, Converter={StaticResource InverseBoolToVis}}"
+                        ToolTip="Without administrator rights some processes cannot be inspected or stopped.">
+                    <TextBlock Text="Administrator recommended" Foreground="{DynamicResource WarningBrush}" FontSize="11"/>
+                </Border>
                 <Button Content="Relaunch as administrator" Command="{Binding RelaunchAsAdminCommand}"
+                        ToolTip="Restart PowerDesk elevated so protected processes can be stopped."
                         Visibility="{Binding IsAdmin, Converter={StaticResource InverseBoolToVis}}"/>
             </StackPanel>
         </DockPanel>
@@ -27,6 +33,7 @@
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
@@ -34,12 +41,34 @@
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                <TextBox Grid.Row="0" Grid.Column="0" Text="{Binding TargetPath, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas"/>
-                <Button Grid.Row="0" Grid.Column="1" Content="File" Margin="8,0,0,0" Command="{Binding SelectFileCommand}"/>
-                <Button Grid.Row="0" Grid.Column="2" Content="Folder" Margin="8,0,0,0" Command="{Binding SelectFolderCommand}"/>
-                <Button Grid.Row="0" Grid.Column="3" Content="Scan" Margin="8,0,0,0" Style="{StaticResource PrimaryButton}" Command="{Binding ScanCommand}"/>
-                <TextBlock Grid.Row="1" Grid.ColumnSpan="4" Text="{Binding ScanScopeLabel}"
-                           Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,8,0,0"/>
+                <TextBox Grid.Row="0" Grid.Column="0" FontFamily="Consolas"
+                         Text="{Binding TargetPath, UpdateSourceTrigger=PropertyChanged}"
+                         ToolTip="Full path of the file or folder to inspect. Press Enter to scan.">
+                    <TextBox.InputBindings>
+                        <KeyBinding Key="Return" Command="{Binding ScanCommand}"/>
+                    </TextBox.InputBindings>
+                </TextBox>
+                <Button Grid.Row="0" Grid.Column="1" Content="File" Margin="8,0,0,0" Command="{Binding SelectFileCommand}"
+                        ToolTip="Pick a file to inspect"/>
+                <Button Grid.Row="0" Grid.Column="2" Content="Folder" Margin="8,0,0,0" Command="{Binding SelectFolderCommand}"
+                        ToolTip="Pick a folder; every file inside (up to a cap) is checked"/>
+                <Button Grid.Row="0" Grid.Column="3" Content="Scan" Margin="8,0,0,0" Style="{StaticResource PrimaryButton}"
+                        Command="{Binding ScanCommand}" ToolTip="Ask the Windows Restart Manager which processes hold this path"/>
+
+                <ProgressBar Grid.Row="1" Grid.ColumnSpan="4" IsIndeterminate="True" Height="3" Margin="0,10,0,0"
+                             Visibility="{Binding IsScanning, Converter={StaticResource BoolToVis}}"/>
+
+                <DockPanel Grid.Row="2" Grid.ColumnSpan="4" Margin="0,8,0,0" LastChildFill="True">
+                    <Border Style="{StaticResource StatBadge}" DockPanel.Dock="Left" Margin="0,0,10,0"
+                            Visibility="{Binding HasProcesses, Converter={StaticResource BoolToVis}}">
+                        <TextBlock Style="{StaticResource TextCaption}" Text="{Binding ProcessCount, StringFormat={}{0} locking}"/>
+                    </Border>
+                    <TextBlock DockPanel.Dock="Right" Style="{StaticResource TextCaption}" Margin="10,0,0,0"
+                               Text="{Binding LastScan, StringFormat=Last scan {0:HH:mm:ss}}"
+                               Visibility="{Binding LastScan, Converter={StaticResource NullToVis}}"/>
+                    <TextBlock Text="{Binding ScanScopeLabel}" Foreground="{DynamicResource TextSecondaryBrush}"
+                               TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+                </DockPanel>
             </Grid>
         </Border>
 
@@ -50,44 +79,102 @@
             </Grid.ColumnDefinitions>
 
             <Border Grid.Column="0" Style="{StaticResource Card}" Padding="0">
-                <DataGrid ItemsSource="{Binding Processes}" SelectedItem="{Binding SelectedProcess}" IsReadOnly="True">
-                    <DataGrid.Columns>
-                        <DataGridTextColumn Header="Process" Binding="{Binding DisplayName}" Width="*"/>
-                        <DataGridTextColumn Header="PID" Binding="{Binding ProcessId}" Width="90"/>
-                        <DataGridTextColumn Header="Path" Binding="{Binding ProcessPath}" Width="300"/>
-                        <DataGridTextColumn Header="Restartable" Binding="{Binding RestartableLabel}" Width="110"/>
-                        <DataGridTextColumn Header="Started" Binding="{Binding StartTimeLabel}" Width="150"/>
-                    </DataGrid.Columns>
-                </DataGrid>
+                <Grid>
+                    <DataGrid ItemsSource="{Binding Processes}" SelectedItem="{Binding SelectedProcess}" IsReadOnly="True"
+                              Visibility="{Binding HasProcesses, Converter={StaticResource BoolToVis}}">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Process" Binding="{Binding DisplayName}" Width="*">
+                                <DataGridTextColumn.ElementStyle>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+                                    </Style>
+                                </DataGridTextColumn.ElementStyle>
+                            </DataGridTextColumn>
+                            <DataGridTextColumn Header="PID" Binding="{Binding ProcessId}" Width="80"/>
+                            <DataGridTextColumn Header="Kind" Binding="{Binding KindLabel}" Width="90"/>
+                            <DataGridTextColumn Header="Path" Binding="{Binding ProcessPath}" Width="2*">
+                                <DataGridTextColumn.ElementStyle>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+                                        <Setter Property="ToolTip" Value="{Binding ProcessPath}"/>
+                                    </Style>
+                                </DataGridTextColumn.ElementStyle>
+                            </DataGridTextColumn>
+                            <DataGridTextColumn Header="Restartable" Binding="{Binding RestartableLabel}" Width="95"/>
+                            <DataGridTextColumn Header="Started" Binding="{Binding StartTimeLabel}" Width="150"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Margin="24"
+                                Visibility="{Binding ShowEmptyState, Converter={StaticResource BoolToVis}}">
+                        <TextBlock Text="{Binding EmptyStateText}" Style="{StaticResource TextSubtitle}"
+                                   Foreground="{DynamicResource TextSecondaryBrush}" TextAlignment="Center" TextWrapping="Wrap"/>
+                        <TextBlock Text="Tip: drag a file or folder onto this page to scan it immediately."
+                                   Style="{StaticResource TextCaption}" Margin="0,8,0,0" TextAlignment="Center"/>
+                    </StackPanel>
+                </Grid>
             </Border>
 
-            <Border Grid.Column="1" Margin="16,0,0,0">
+            <Border Grid.Column="1" Margin="16,0,0,0" Style="{StaticResource Card}">
                 <Grid>
                     <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
                                 Visibility="{Binding SelectedProcess, Converter={StaticResource NullToVis}, ConverterParameter=invert}">
                         <TextBlock Text="No process selected" Style="{StaticResource TextSubtitle}" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                        <TextBlock Text="Select a row to inspect or stop it." Style="{StaticResource TextCaption}" Margin="0,6,0,0" TextAlignment="Center"/>
                     </StackPanel>
 
-                    <StackPanel Visibility="{Binding SelectedProcess, Converter={StaticResource NullToVis}}"
-                                DataContext="{Binding SelectedProcess}">
-                        <TextBlock Text="{Binding DisplayName}" Style="{StaticResource TextSubtitle}" TextWrapping="Wrap"/>
-                        <TextBlock Text="{Binding ProcessId, StringFormat=PID {0}}" Foreground="{DynamicResource AccentBrush}" FontWeight="SemiBold"/>
-                        <Border Background="{DynamicResource DividerBrush}" Height="1" Margin="0,14"/>
-                        <TextBlock Text="Path" Style="{StaticResource TextCaption}"/>
-                        <TextBlock Text="{Binding ProcessPath}" FontFamily="Consolas" TextWrapping="Wrap"/>
-                        <TextBlock Text="Window" Style="{StaticResource TextCaption}" Margin="0,12,0,0"/>
-                        <TextBlock Text="{Binding MainWindowTitle}" TextWrapping="Wrap"/>
-                        <TextBlock Text="Restartable" Style="{StaticResource TextCaption}" Margin="0,12,0,0"/>
-                        <TextBlock Text="{Binding RestartableLabel}"/>
-                        <UniformGrid Columns="2" Margin="0,16,0,0">
-                            <Button Content="Copy PID" Margin="0,0,4,0"
-                                    Command="{Binding DataContext.CopyProcessIdCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"/>
-                            <Button Content="Open location" Margin="4,0,0,0"
-                                    Command="{Binding DataContext.OpenProcessLocationCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"/>
-                        </UniformGrid>
-                        <Button Content="Stop process" Style="{StaticResource DangerButton}" Margin="0,10,0,0"
-                                Command="{Binding DataContext.StopProcessCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"/>
-                    </StackPanel>
+                    <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                  Visibility="{Binding SelectedProcess, Converter={StaticResource NullToVis}}">
+                        <StackPanel DataContext="{Binding SelectedProcess}">
+                            <TextBlock Text="{Binding DisplayName}" Style="{StaticResource TextSubtitle}" TextWrapping="Wrap"/>
+                            <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                                <TextBlock Text="{Binding ProcessId, StringFormat=PID {0}}" Foreground="{DynamicResource AccentBrush}" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                <Border Style="{StaticResource Pill}" Margin="10,0,0,0"
+                                        Visibility="{Binding IsCriticalSystemProcess, Converter={StaticResource BoolToVis}}"
+                                        ToolTip="Windows system process. Stopping it can crash Windows or log you out.">
+                                    <TextBlock Text="System process" Foreground="{DynamicResource WarningBrush}" FontSize="11"/>
+                                </Border>
+                                <Border Style="{StaticResource Pill}" Margin="10,0,0,0" Background="{DynamicResource AccentSoftBrush}"
+                                        Visibility="{Binding IsCurrentProcess, Converter={StaticResource BoolToVis}}"
+                                        ToolTip="PowerDesk itself holds this lock; it cannot be stopped from here.">
+                                    <TextBlock Text="This app" Foreground="{DynamicResource AccentBrush}" FontSize="11"/>
+                                </Border>
+                                <Border Style="{StaticResource Pill}" Margin="10,0,0,0"
+                                        Visibility="{Binding IsService, Converter={StaticResource BoolToVis}}">
+                                    <TextBlock Text="{Binding ServiceName, StringFormat=Service {0}}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11"/>
+                                </Border>
+                            </StackPanel>
+                            <Border Background="{DynamicResource DividerBrush}" Height="1" Margin="0,14"/>
+                            <TextBlock Text="Path" Style="{StaticResource TextCaption}"/>
+                            <TextBox Text="{Binding ProcessPath, Mode=OneWay}" IsReadOnly="True" FontFamily="Consolas" TextWrapping="Wrap" Margin="0,4,0,0"
+                                     ToolTip="Read-only. Select and copy if needed."/>
+                            <TextBlock Text="Window" Style="{StaticResource TextCaption}" Margin="0,12,0,0"/>
+                            <TextBlock Text="{Binding MainWindowTitle, TargetNullValue=-}" TextWrapping="Wrap"/>
+                            <UniformGrid Columns="2" Margin="0,12,0,0">
+                                <StackPanel Margin="0,0,8,0">
+                                    <TextBlock Text="Restartable" Style="{StaticResource TextCaption}"/>
+                                    <TextBlock Text="{Binding RestartableLabel}"/>
+                                </StackPanel>
+                                <StackPanel>
+                                    <TextBlock Text="Started" Style="{StaticResource TextCaption}"/>
+                                    <TextBlock Text="{Binding StartTimeLabel}"/>
+                                </StackPanel>
+                            </UniformGrid>
+                            <UniformGrid Columns="2" Margin="0,16,0,0">
+                                <Button Content="Copy PID" Margin="0,0,4,0" ToolTip="Copy the process ID to the clipboard"
+                                        Command="{Binding DataContext.CopyProcessIdCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"/>
+                                <Button Content="Open location" Margin="4,0,0,0" ToolTip="Reveal the executable in File Explorer"
+                                        Command="{Binding DataContext.OpenProcessLocationCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"/>
+                            </UniformGrid>
+                            <TextBlock Style="{StaticResource TextCaption}" Margin="0,12,0,0" TextWrapping="Wrap"
+                                       Foreground="{DynamicResource WarningBrush}"
+                                       Text="Stopping a Windows system process can crash Windows or sign you out."
+                                       Visibility="{Binding IsCriticalSystemProcess, Converter={StaticResource BoolToVis}}"/>
+                            <Button Content="Stop process" Style="{StaticResource DangerButton}" Margin="0,10,0,0"
+                                    ToolTip="Terminate the process after re-checking it still holds the lock (asks for confirmation)"
+                                    Command="{Binding DataContext.StopProcessCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"/>
+                        </StackPanel>
+                    </ScrollViewer>
                 </Grid>
             </Border>
         </Grid>

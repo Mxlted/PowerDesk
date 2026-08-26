@@ -16,38 +16,98 @@
                            Text="Pick, sample, convert, and copy colors."/>
             </StackPanel>
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-                <Button Content="Dialog" Command="{Binding OpenColorDialogCommand}"/>
-                <Button Content="Pick screen" Margin="8,0,0,0" Style="{StaticResource PrimaryButton}" Click="PickScreen_Click"/>
+                <Button Content="Dialog" Command="{Binding OpenColorDialogCommand}"
+                        ToolTip="Choose a color with the Windows color dialog"/>
+                <Button Content="Pick screen" Margin="8,0,0,0" Style="{StaticResource PrimaryButton}" Click="PickScreen_Click"
+                        ToolTip="Sample any pixel on any monitor. Left-click samples, right-click or Esc cancels."/>
             </StackPanel>
         </DockPanel>
 
         <Grid Grid.Row="1" Margin="0,18,0,0">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="420"/>
-                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="2*" MinWidth="220" MaxWidth="480"/>
+                <ColumnDefinition Width="3*"/>
             </Grid.ColumnDefinitions>
 
-            <Border Grid.Column="0" Background="{Binding SwatchBrush}" BorderBrush="{DynamicResource BorderBrush}"
-                    BorderThickness="1" CornerRadius="8" MinHeight="420"/>
+            <Grid Grid.Column="0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <Border Grid.Row="0" Background="{Binding SwatchBrush}" BorderBrush="{DynamicResource BorderBrush}"
+                        BorderThickness="1" CornerRadius="8" MinHeight="220"
+                        ToolTip="{Binding CanonicalHex}"/>
+
+                <Border Grid.Row="1" Style="{StaticResource Card}" Margin="0,16,0,0">
+                    <StackPanel>
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right" Content="Clear" Style="{StaticResource GhostButton}"
+                                    Command="{Binding ClearHistoryCommand}"
+                                    Visibility="{Binding HasHistory, Converter={StaticResource BoolToVis}}"
+                                    ToolTip="Forget the recent colors"/>
+                            <TextBlock Text="Recent colors" Style="{StaticResource TextCaption}" VerticalAlignment="Center"/>
+                        </DockPanel>
+                        <TextBlock Text="Sampled and picked colors will appear here."
+                                   Style="{StaticResource TextCaption}" Margin="0,8,0,0"
+                                   Visibility="{Binding HasHistory, Converter={StaticResource InverseBoolToVis}}"/>
+                        <ItemsControl ItemsSource="{Binding History}" Margin="0,8,0,0"
+                                      Visibility="{Binding HasHistory, Converter={StaticResource BoolToVis}}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <WrapPanel/>
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Button Style="{StaticResource GhostButton}" Padding="0" Margin="0,0,8,8"
+                                            Command="{Binding DataContext.SelectHistoryCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                            CommandParameter="{Binding}"
+                                            ToolTip="{Binding Hex}"
+                                            AutomationProperties.Name="{Binding Hex}">
+                                        <Border Width="32" Height="32" CornerRadius="6"
+                                                Background="{Binding Brush}"
+                                                BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1"/>
+                                    </Button>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
+            </Grid>
 
             <Border Grid.Column="1" Margin="24,0,0,0">
                 <StackPanel MaxWidth="520" HorizontalAlignment="Left">
                     <TextBlock Text="Values" Style="{StaticResource TextSubtitle}"/>
-                    <TextBlock Text="HEX" Style="{StaticResource TextCaption}" Margin="0,14,0,4"/>
+
+                    <DockPanel Margin="0,14,0,4">
+                        <Border DockPanel.Dock="Right" Style="{StaticResource Pill}"
+                                Visibility="{Binding IsHexValid, Converter={StaticResource InverseBoolToVis}}">
+                            <TextBlock Text="Incomplete or invalid hex" Style="{StaticResource TextCaption}"
+                                       Foreground="{DynamicResource WarningBrush}"/>
+                        </Border>
+                        <TextBlock Text="HEX" Style="{StaticResource TextCaption}" VerticalAlignment="Center"/>
+                    </DockPanel>
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <TextBox Grid.Column="0" Text="{Binding Hex, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas"/>
-                        <Button Grid.Column="1" Content="Copy" Margin="8,0,0,0" Command="{Binding CopyHexCommand}"/>
+                        <TextBox Grid.Column="0" Text="{Binding Hex, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas"
+                                 MaxLength="12" KeyDown="HexBox_KeyDown" LostFocus="HexBox_LostFocus"
+                                 ToolTip="Accepts #RGB, #RGBA, #RRGGBB, or #RRGGBBAA (alpha is ignored). Press Enter to normalize."/>
+                        <Button Grid.Column="1" Content="Copy" Margin="8,0,0,0" Command="{Binding CopyHexCommand}"
+                                ToolTip="Copy the color as #rrggbb"/>
                     </Grid>
 
                     <TextBlock Text="RGB channels" Style="{StaticResource TextCaption}" Margin="0,14,0,4"/>
                     <UniformGrid Columns="3">
-                        <TextBox Text="{Binding Red, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,6,0"/>
-                        <TextBox Text="{Binding Green, UpdateSourceTrigger=PropertyChanged}" Margin="3,0,3,0"/>
-                        <TextBox Text="{Binding Blue, UpdateSourceTrigger=PropertyChanged}" Margin="6,0,0,0"/>
+                        <TextBox Text="{Binding Red, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,6,0"
+                                 ToolTip="Red (0-255)" AutomationProperties.Name="Red channel"/>
+                        <TextBox Text="{Binding Green, UpdateSourceTrigger=PropertyChanged}" Margin="3,0,3,0"
+                                 ToolTip="Green (0-255)" AutomationProperties.Name="Green channel"/>
+                        <TextBox Text="{Binding Blue, UpdateSourceTrigger=PropertyChanged}" Margin="6,0,0,0"
+                                 ToolTip="Blue (0-255)" AutomationProperties.Name="Blue channel"/>
                     </UniformGrid>
 
                     <TextBlock Text="RGB" Style="{StaticResource TextCaption}" Margin="0,14,0,4"/>
@@ -56,8 +116,9 @@
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <TextBox Grid.Column="0" Text="{Binding Rgb}" IsReadOnly="True" FontFamily="Consolas"/>
-                        <Button Grid.Column="1" Content="Copy" Margin="8,0,0,0" Command="{Binding CopyRgbCommand}"/>
+                        <TextBox Grid.Column="0" Text="{Binding Rgb, Mode=OneWay}" IsReadOnly="True" FontFamily="Consolas"/>
+                        <Button Grid.Column="1" Content="Copy" Margin="8,0,0,0" Command="{Binding CopyRgbCommand}"
+                                ToolTip="Copy as rgb(r, g, b)"/>
                     </Grid>
 
                     <TextBlock Text="HSL" Style="{StaticResource TextCaption}" Margin="0,14,0,4"/>
@@ -66,9 +127,14 @@
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <TextBox Grid.Column="0" Text="{Binding Hsl}" IsReadOnly="True" FontFamily="Consolas"/>
-                        <Button Grid.Column="1" Content="Copy" Margin="8,0,0,0" Command="{Binding CopyHslCommand}"/>
+                        <TextBox Grid.Column="0" Text="{Binding Hsl, Mode=OneWay}" IsReadOnly="True" FontFamily="Consolas"/>
+                        <Button Grid.Column="1" Content="Copy" Margin="8,0,0,0" Command="{Binding CopyHslCommand}"
+                                ToolTip="Copy as hsl(h, s%, l%)"/>
                     </Grid>
+
+                    <Button Content="Sample under cursor" Margin="0,18,0,0" HorizontalAlignment="Left"
+                            Command="{Binding SampleCursorPixelCommand}"
+                            ToolTip="Read the pixel currently under the mouse pointer without entering pick mode"/>
                 </StackPanel>
             </Border>
         </Grid>

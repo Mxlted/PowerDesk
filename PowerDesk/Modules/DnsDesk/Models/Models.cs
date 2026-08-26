@@ -23,6 +23,8 @@ public sealed class DnsAdapter
         ? "Usable"
         : !HasIpv6 ? "Unavailable"
         : IsUp ? "No route" : "Adapter down";
+
+    public override string ToString() => Name;
 }
 
 public sealed class DnsProfile
@@ -33,10 +35,13 @@ public sealed class DnsProfile
     public string Ipv6Primary { get; init; } = string.Empty;
     public string Ipv6Secondary { get; init; } = string.Empty;
     public bool UseDhcp { get; init; }
+    /// <summary>True for the editable "Custom" profile whose addresses come from the view.</summary>
+    public bool IsCustom { get; init; }
 
     public string ServerLabel => UseDhcp
-        ? "Automatic"
-        : $"{Ipv4Label} / {Ipv6Label}";
+        ? "Obtain DNS servers automatically (DHCP)."
+        : IsCustom ? "Enter your own resolver addresses below."
+        : $"IPv4: {Ipv4Label}\nIPv6: {Ipv6Label}";
 
     public string Ipv4Label => string.IsNullOrWhiteSpace(Ipv4Primary)
         ? "-"

@@ -1,4 +1,5 @@
 using System;
+using System.Threading.Tasks;
 using System.Windows;
 using PowerDesk.Modules.StartupPilot.Models;
 using PowerDesk.Modules.StartupPilot.ViewModels;
@@ -6,8 +7,6 @@ using UserControl = System.Windows.Controls.UserControl;
 using DataGrid = System.Windows.Controls.DataGrid;
 using DataGridRow = System.Windows.Controls.DataGridRow;
 using DependencyObject = System.Windows.DependencyObject;
-using MessageBox = System.Windows.MessageBox;
-using MessageBoxButton = System.Windows.MessageBoxButton;
 using MouseButtonEventArgs = System.Windows.Input.MouseButtonEventArgs;
 using VisualTreeHelper = System.Windows.Media.VisualTreeHelper;
 
@@ -22,41 +21,36 @@ public partial class StartupPilotView : UserControl
         InitializeComponent();
         _vm = vm;
         DataContext = vm;
-        vm.PropertyChanged += (_, e) =>
-        {
-            if (e.PropertyName == nameof(StartupPilotViewModel.LastScan))
-                LastScanLabel.Text = vm.LastScan is null ? "" : $"Last scan: {vm.LastScan:HH:mm:ss}";
-        };
     }
 
-    private async void EnableToggle_Click(object sender, RoutedEventArgs e)
+    /// <summary>
+    /// Awaits view-model work from an <c>async void</c> handler. The view model already reports failures through the
+    /// status bar; this keeps anything unexpected from escaping as an unobserved exception that would crash the app.
+    /// </summary>
+    private static async void Run(Task work)
+    {
+        try { await work; }
+        catch (Exception ex) { App.Instance?.Logger?.Error("StartupPilot view", ex); }
+    }
+
+    private void EnableToggle_Click(object sender, RoutedEventArgs e)
     {
         if (sender is System.Windows.Controls.CheckBox cb && cb.DataContext is StartupItem item)
         {
             // Revert the optimistic UI flip; the VM owns the truth.
             cb.IsChecked = item.Enabled;
-            await _vm.ToggleItemAsync(item);
+            Run(_vm.ToggleItemAsync(item));
         }
     }
 
-    private async void ToggleMenu_Click(object sender, RoutedEventArgs e) => await _vm.ToggleItemAsync(_vm.SelectedItem);
+    private void ToggleMenu_Click(object sender, RoutedEventArgs e) => Run(_vm.ToggleItemAsync(_vm.SelectedItem));
     private void OpenLocationMenu_Click(object sender, RoutedEventArgs e) => _vm.OpenFileLocation(_vm.SelectedItem);
     private void CopyMenu_Click(object sender, RoutedEventArgs e) => _vm.CopyCommandLine(_vm.SelectedItem);
-    private async void PinMenu_Click(object sender, RoutedEventArgs e) => await _vm.TogglePinnedAsync(_vm.SelectedItem);
+    private void PinMenu_Click(object sender, RoutedEventArgs e) => Run(_vm.TogglePinnedAsync(_vm.SelectedItem));
+    private void NoteMenu_Click(object sender, RoutedEventArgs e) => EditNote(_vm.SelectedItem);
 
-    private async void NoteMenu_Click(object sender, RoutedEventArgs e)
-    {
-        var item = _vm.SelectedItem;
-        if (item is null) return;
-        var dlg = new NoteDialog(item.Name, item.Note)
-        {
-            Owner = System.Windows.Window.GetWindow(this),
-        };
-        if (dlg.ShowDialog() == true) await _vm.SetNoteAsync(item, dlg.NoteText);
-    }
-
-    private async void BulkEnable_Click(object sender, RoutedEventArgs e)  => await _vm.BulkEnableAsync(ItemsGrid.SelectedItems);
-    private async void BulkDisable_Click(object sender, RoutedEventArgs e) => await _vm.BulkDisableAsync(ItemsGrid.SelectedItems);
+    private void BulkEnable_Click(object sender, RoutedEventArgs e)  => Run(_vm.BulkEnableAsync(ItemsGrid.SelectedItems));
+    private void BulkDisable_Click(object sender, RoutedEventArgs e) => Run(_vm.BulkDisableAsync(ItemsGrid.SelectedItems));
 
     private void DataGrid_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
     {
@@ -65,32 +59,40 @@ public partial class StartupPilotView : UserControl
         if (row is null) return;
 
         row.Focus();
-        row.IsSelected = true;
-        grid.SelectedItem = row.Item;
+        // Keep an existing multi-selection when right-clicking inside it; otherwise select just this row.
+        if (!row.IsSelected)
+            grid.SelectedItem = row.Item;
     }
 
-    private async void ServiceAutomaticMenu_Click(object sender, RoutedEventArgs e) =>
-        await _vm.SetServiceStartupTypeAsync(_vm.SelectedService, ServiceStartupType.Automatic);
+    private void ServiceAutomaticMenu_Click(object sender, RoutedEventArgs e) =>
+        Run(_vm.SetServiceStartupTypeAsync(_vm.SelectedService, ServiceStartupType.Automatic));
 
-    private async void ServiceManualMenu_Click(object sender, RoutedEventArgs e) =>
-        await _vm.SetServiceStartupTypeAsync(_vm.SelectedService, ServiceStartupType.Manual);
+    private void ServiceManualMenu_Click(object sender, RoutedEventArgs e) =>
+        Run(_vm.SetServiceStartupTypeAsync(_vm.SelectedService, ServiceStartupType.Manual));
 
-    private async void ServiceDisabledMenu_Click(object sender, RoutedEventArgs e) =>
-        await _vm.SetServiceStartupTypeAsync(_vm.SelectedService, ServiceStartupType.Disabled);
+    private void ServiceDisabledMenu_Click(object sender, RoutedEventArgs e) =>
+        Run(_vm.SetServiceStartupTypeAsync(_vm.SelectedService, ServiceStartupType.Disabled));
 
     private void ServiceOpenLocationMenu_Click(object sender, RoutedEventArgs e) => _vm.OpenFileLocation(_vm.SelectedService);
     private void ServiceCopyMenu_Click(object sender, RoutedEventArgs e) => _vm.CopyCommandLine(_vm.SelectedService);
-    private async void ServicePinMenu_Click(object sender, RoutedEventArgs e) => await _vm.TogglePinnedAsync(_vm.SelectedService);
+    private void ServicePinMenu_Click(object sender, RoutedEventArgs e) => Run(_vm.TogglePinnedAsync(_vm.SelectedService));
+    private void ServiceNoteMenu_Click(object sender, RoutedEventArgs e) => EditNote(_vm.SelectedService);
 
-    private async void ServiceNoteMenu_Click(object sender, RoutedEventArgs e)
+    private void EditNote(StartupItem? item)
     {
-        var item = _vm.SelectedService;
         if (item is null) return;
-        var dlg = new NoteDialog(item.Name, item.Note)
+        try
         {
-            Owner = System.Windows.Window.GetWindow(this),
-        };
-        if (dlg.ShowDialog() == true) await _vm.SetNoteAsync(item, dlg.NoteText);
+            var dlg = new NoteDialog(item.Name, item.Note)
+            {
+                Owner = System.Windows.Window.GetWindow(this),
+            };
+            if (dlg.ShowDialog() == true) Run(_vm.SetNoteAsync(item, dlg.NoteText));
+        }
+        catch (Exception ex)
+        {
+            App.Instance?.Logger?.Error("StartupPilot note dialog", ex);
+        }
     }
 
     private static T? FindVisualParent<T>(DependencyObject? child) where T : DependencyObject

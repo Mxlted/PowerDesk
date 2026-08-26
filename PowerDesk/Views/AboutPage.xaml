@@ -41,6 +41,22 @@
                         <TextBlock Grid.Row="3" Grid.Column="0" Text="Accounts"    Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,6,0,0"/>
                         <TextBlock Grid.Row="3" Grid.Column="1" Text="No sign-in required." Margin="0,6,0,0"/>
                     </Grid>
+                    <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
+                        <Button Content="Project on GitHub" Click="OpenLink_Click" Tag="https://github.com/Mxlted/PowerDesk"
+                                ToolTip="Opens https://github.com/Mxlted/PowerDesk in your browser."/>
+                        <Button Content="Report an issue" Click="OpenLink_Click" Tag="https://github.com/Mxlted/PowerDesk/issues" Margin="10,0,0,0"
+                                ToolTip="Opens the issue tracker in your browser."/>
+                        <Button Content="Copy diagnostics" Click="CopyDiagnostics_Click" Margin="10,0,0,0"
+                                ToolTip="Copies version, OS, and elevation details to the clipboard for bug reports."/>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource Card}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Style="{StaticResource TextSubtitle}" Text="License"/>
+                    <TextBlock Style="{StaticResource TextCaption}" Margin="0,6,0,0" TextWrapping="Wrap"
+                               Text="PowerDesk is open source under the MIT License. It bundles CommunityToolkit.Mvvm (MIT) and TaskScheduler by David Hall (MIT)."/>
                 </StackPanel>
             </Border>
 

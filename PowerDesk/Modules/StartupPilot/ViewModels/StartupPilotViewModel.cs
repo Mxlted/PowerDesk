@@ -4,6 +4,7 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Data;
@@ -32,6 +33,7 @@ public sealed partial class StartupPilotViewModel : ObservableObject
     private readonly StartupController _controller;
     private readonly string _settingsPath;
     private bool _initializing;
+    private bool _rescanRequested;
 
     public ObservableCollection<StartupItem> Items { get; } = new();
     public ObservableCollection<StartupHistoryEntry> History { get; } = new();
@@ -51,11 +53,32 @@ public sealed partial class StartupPilotViewModel : ObservableObject
     [ObservableProperty] private bool _showMicrosoft;
     [ObservableProperty] private bool _confirmBeforeDisable = true;
     [ObservableProperty] private DateTime? _lastScan;
-    [ObservableProperty] private bool _isScanning;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsBusy))]
+    private bool _isScanning;
+
+    /// <summary>True while a toggle / service change is being applied on a worker thread.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsBusy))]
+    [NotifyCanExecuteChangedFor(nameof(UndoLastCommand))]
+    [NotifyCanExecuteChangedFor(nameof(SetSelectedServiceAutomaticCommand))]
+    [NotifyCanExecuteChangedFor(nameof(SetSelectedServiceManualCommand))]
+    [NotifyCanExecuteChangedFor(nameof(SetSelectedServiceDisabledCommand))]
+    private bool _isApplying;
+
     [ObservableProperty] private string _historySearchText = string.Empty;
     [ObservableProperty] private StartupItem? _selectedItem;
-    [ObservableProperty] private StartupItem? _selectedService;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(SetSelectedServiceAutomaticCommand))]
+    [NotifyCanExecuteChangedFor(nameof(SetSelectedServiceManualCommand))]
+    [NotifyCanExecuteChangedFor(nameof(SetSelectedServiceDisabledCommand))]
+    private StartupItem? _selectedService;
+
     [ObservableProperty] private HistoryRetention _retention = HistoryRetention.Last100;
+
+    public bool IsBusy => IsScanning || IsApplying;
 
     public int TotalCount     => Items.Count;
     public int StartupEntryCount => Items.Count(IsStartupEntry);
@@ -105,6 +128,7 @@ public sealed partial class StartupPilotViewModel : ObservableObject
         HistoryView = CollectionViewSource.GetDefaultView(History);
         HistoryView.Filter = HistoryFilter;
         HistoryView.SortDescriptions.Add(new SortDescription(nameof(StartupHistoryEntry.Timestamp), ListSortDirection.Descending));
+        History.CollectionChanged += (_, _) => UndoLastCommand.NotifyCanExecuteChanged();
     }
 
     public async Task InitializeAsync()
@@ -113,12 +137,19 @@ public sealed partial class StartupPilotViewModel : ObservableObject
         try
         {
             Settings = await _storage.LoadAsync(_settingsPath, () => new StartupPilotSettings());
+            Settings.Notes ??= new();
+            Settings.Pinned ??= new();
+            Settings.History ??= new();
             ShowMicrosoft = Settings.ShowMicrosoftItems;
             ConfirmBeforeDisable = Settings.ConfirmBeforeDisable;
             LastScan = Settings.LastScan;
             Retention = Settings.Retention;
             History.Clear();
             foreach (var h in Settings.History) History.Add(h);
+        }
+        catch (Exception ex)
+        {
+            _log.Error("StartupPilot settings load", ex);
         }
         finally
         {
@@ -136,25 +167,10 @@ public sealed partial class StartupPilotViewModel : ObservableObject
         Settings.ConfirmBeforeDisable = ConfirmBeforeDisable;
         Settings.LastScan = LastScan;
         Settings.Retention = Retention;
-        ApplyRetention();
+        StartupPilotLogic.ApplyRetention(History, Retention, DateTime.Now);
         Settings.History = History.ToList();
         if (!await _storage.SaveAsync(_settingsPath, Settings))
             _status.Set("StartupPilot settings could not be saved.", StatusKind.Warning);
-    }
-
-    private void ApplyRetention()
-    {
-        switch (Retention)
-        {
-            case HistoryRetention.Last100:
-                while (History.Count > 100) History.RemoveAt(History.Count - 1);
-                break;
-            case HistoryRetention.Last30Days:
-                var cutoff = DateTime.Now.AddDays(-30);
-                for (int i = History.Count - 1; i >= 0; i--)
-                    if (History[i].Timestamp < cutoff) History.RemoveAt(i);
-                break;
-        }
     }
 
     partial void OnSearchTextChanged(string value)
@@ -173,6 +189,14 @@ public sealed partial class StartupPilotViewModel : ObservableObject
         if (_initializing) return;
         // re-scan to actually include/exclude Microsoft items, since the scanner filters at the source.
         _ = RescanAsync();
+    }
+    partial void OnConfirmBeforeDisableChanged(bool value)
+    {
+        if (!_initializing) _ = SaveAsync();
+    }
+    partial void OnRetentionChanged(HistoryRetention value)
+    {
+        if (!_initializing) _ = SaveAsync();
     }
     partial void OnHistorySearchTextChanged(string value) => HistoryView.Refresh();
 
@@ -229,27 +253,60 @@ public sealed partial class StartupPilotViewModel : ObservableObject
     [RelayCommand]
     public async Task RescanAsync()
     {
-        if (IsScanning) return;
+        // Callers outside the UI thread (tray menu handlers, shell hooks) are marshalled so every
+        // collection / property mutation below happens on the dispatcher.
+        if (!UiDispatcher.IsOnUiThread && System.Windows.Application.Current?.Dispatcher is { } dispatcher)
+        {
+            Func<Task> rescan = RescanAsync;
+            await dispatcher.InvokeAsync(rescan).Task.Unwrap();
+            return;
+        }
+
+        // A request that arrives while a scan is running (e.g. flipping "Microsoft" mid-scan) is queued
+        // rather than dropped, so the list always reflects the latest options.
+        if (IsScanning) { _rescanRequested = true; return; }
         IsScanning = true;
+        try
+        {
+            do
+            {
+                _rescanRequested = false;
+                await RunScanOnceAsync();
+            } while (_rescanRequested);
+        }
+        finally { IsScanning = false; }
+    }
+
+    private async Task RunScanOnceAsync()
+    {
         _status.Set("Scanning startup items…", StatusKind.Info);
         try
         {
-            var list = await _scanner.ScanAsync(ShowMicrosoft);
+            var includeMicrosoft = ShowMicrosoft;
+            var list = await _scanner.ScanAsync(includeMicrosoft);
+            var isAdmin = IsAdmin;
             // Merge notes/pinned from settings.
             foreach (var i in list)
             {
                 var key = NoteKey(i);
                 if (Settings.Notes.TryGetValue(key, out var note)) i.Note = note;
                 i.IsPinned = Settings.Pinned.Contains(key);
+                i.NeedsElevation = i.RequiresAdmin && !isAdmin;
             }
             UiDispatcher.Invoke(() =>
             {
+                // Keep the selection across rescans by identity (source + locator) rather than object reference.
+                var selectedKey = SelectedItem is { } s ? NoteKey(s) : null;
+                var selectedServiceKey = SelectedService is { } ss ? NoteKey(ss) : null;
+
                 Items.Clear();
                 foreach (var i in list) Items.Add(i);
+                SelectedItem = selectedKey is null ? null : Items.FirstOrDefault(i => NoteKey(i) == selectedKey);
+                SelectedService = selectedServiceKey is null ? null : Items.FirstOrDefault(i => NoteKey(i) == selectedServiceKey);
                 LastScan = DateTime.Now;
                 RaiseCounts();
             });
-            _status.Set($"Scan complete: {Items.Count} items.", StatusKind.Success);
+            _status.Set($"Scan complete: {StartupEntryCount} startup entries, {ServiceCount} services.", StatusKind.Success);
             _recent.Add("StartupPilot", $"Scanned {Items.Count} startup items.");
             await SaveAsync();
         }
@@ -258,7 +315,6 @@ public sealed partial class StartupPilotViewModel : ObservableObject
             _log.Error("Rescan", ex);
             _status.Set("Scan failed. See logs.", StatusKind.Error);
         }
-        finally { IsScanning = false; }
     }
 
     private void RaiseCounts()
@@ -279,7 +335,39 @@ public sealed partial class StartupPilotViewModel : ObservableObject
 
     private static bool IsStartupEntry(StartupItem item) => item.Source != StartupSource.Service;
 
-    private static string NoteKey(StartupItem i) => $"{i.Source}|{i.Locator}";
+    private static string NoteKey(StartupItem i) => StartupPilotLogic.NoteKey(i.Source, i.Locator);
+
+    /// <summary>
+    /// Runs a controller operation on a worker thread. Registry, Task Scheduler COM and sc.exe calls can
+    /// each block for seconds; keeping them off the dispatcher keeps the window responsive.
+    /// </summary>
+    private async Task<StartupActionResult> RunControllerAsync(Func<StartupActionResult> operation)
+    {
+        try { return await Task.Run(operation); }
+        catch (Exception ex)
+        {
+            _log.Error("Startup change", ex);
+            return new StartupActionResult { Success = false, Message = ex.Message };
+        }
+    }
+
+    private bool TryBeginApply()
+    {
+        if (IsApplying)
+        {
+            _status.Set("Another change is still being applied.", StatusKind.Warning);
+            return false;
+        }
+        IsApplying = true;
+        return true;
+    }
+
+    private void RefreshViews()
+    {
+        ItemsView.Refresh();
+        ServicesView.Refresh();
+        RaiseCounts();
+    }
 
     [RelayCommand]
     public async Task ToggleItemAsync(StartupItem? item)
@@ -296,42 +384,51 @@ public sealed partial class StartupPilotViewModel : ObservableObject
         }
         bool target = !item.Enabled;
 
+        if (item.NeedsElevation)
+        {
+            _status.Set("Administrator privileges are required to change that item.", StatusKind.Warning);
+            return;
+        }
+
         if (!target && ConfirmBeforeDisable)
         {
             if (!_confirm.Confirm($"Disable '{item.Name}'?\n\n{item.CommandLine}", "Confirm disable", destructive: true))
                 return;
         }
 
-        var oldKey = NoteKey(item);
-        var result = _controller.Toggle(item, target);
-        if (result.NeedsElevation)
+        if (!TryBeginApply()) return;
+        try
         {
-            _status.Set("Administrator privileges required for that item.", StatusKind.Warning);
-            return;
-        }
-        if (!result.Success)
-        {
-            _status.Set(result.Message, StatusKind.Error);
-            return;
-        }
-        var updatedLocator = result.UpdatedLocator ?? item.Locator;
-        MigrateItemMetadata(item, oldKey, updatedLocator);
-        item.Locator = updatedLocator;
+            var oldKey = NoteKey(item);
+            var result = await RunControllerAsync(() => _controller.Toggle(item, target));
+            if (result.NeedsElevation)
+            {
+                _status.Set("Administrator privileges required for that item.", StatusKind.Warning);
+                return;
+            }
+            if (!result.Success)
+            {
+                _status.Set(result.Message, StatusKind.Error);
+                return;
+            }
+            var updatedLocator = result.UpdatedLocator ?? item.Locator;
+            MigrateItemMetadata(item, oldKey, updatedLocator);
+            item.Locator = updatedLocator;
 
-        var entry = new StartupHistoryEntry
-        {
-            ItemName = item.Name, Source = item.Source,
-            OldEnabled = item.Enabled, NewEnabled = target,
-            ItemLocator = item.Locator, Scope = item.Scope,
-        };
-        History.Insert(0, entry);
-        item.Enabled = target;
-        ItemsView.Refresh();
-        ServicesView.Refresh();
-        RaiseCounts();
-        _recent.Add("StartupPilot", $"{(target ? "Enabled" : "Disabled")}: {item.Name}");
-        _status.Set(result.Message, StatusKind.Success);
-        await SaveAsync();
+            var entry = new StartupHistoryEntry
+            {
+                ItemName = item.Name, Source = item.Source,
+                OldEnabled = item.Enabled, NewEnabled = target,
+                ItemLocator = item.Locator, Scope = item.Scope,
+            };
+            History.Insert(0, entry);
+            item.Enabled = target;
+            RefreshViews();
+            _recent.Add("StartupPilot", $"{(target ? "Enabled" : "Disabled")}: {item.Name}");
+            _status.Set(result.Message, StatusKind.Success);
+            await SaveAsync();
+        }
+        finally { IsApplying = false; }
     }
 
     [RelayCommand]
@@ -358,54 +455,65 @@ public sealed partial class StartupPilotViewModel : ObservableObject
             _status.Set("Service items must be changed one at a time.", StatusKind.Warning);
             return;
         }
+        var pending = items.Where(i => i.Enabled != enable).ToList();
+        if (pending.Count == 0)
+        {
+            _status.Set($"All selected items are already {(enable ? "enabled" : "disabled")}.", StatusKind.Info);
+            return;
+        }
         if (!enable && ConfirmBeforeDisable)
         {
-            if (!_confirm.Confirm($"Disable {items.Count} items?", "Confirm bulk disable", destructive: true))
+            if (!_confirm.Confirm($"Disable {pending.Count} item(s)?", "Confirm bulk disable", destructive: true))
                 return;
         }
+        if (!TryBeginApply()) return;
         int changed = 0, needAdmin = 0, failed = 0;
-        foreach (var item in items)
+        try
         {
-            if (item.Enabled == enable) continue;
-            var oldKey = NoteKey(item);
-            var r = _controller.Toggle(item, enable);
-            if (r.Success)
+            foreach (var item in pending)
             {
-                var updatedLocator = r.UpdatedLocator ?? item.Locator;
-                MigrateItemMetadata(item, oldKey, updatedLocator);
-                item.Locator = updatedLocator;
-                History.Insert(0, new StartupHistoryEntry
+                if (item.NeedsElevation) { needAdmin++; continue; }
+                var oldKey = NoteKey(item);
+                var r = await RunControllerAsync(() => _controller.Toggle(item, enable));
+                if (r.Success)
                 {
-                    ItemName = item.Name, Source = item.Source, OldEnabled = item.Enabled,
-                    NewEnabled = enable, ItemLocator = item.Locator, Scope = item.Scope,
-                });
-                item.Enabled = enable;
-                changed++;
+                    var updatedLocator = r.UpdatedLocator ?? item.Locator;
+                    MigrateItemMetadata(item, oldKey, updatedLocator);
+                    item.Locator = updatedLocator;
+                    History.Insert(0, new StartupHistoryEntry
+                    {
+                        ItemName = item.Name, Source = item.Source, OldEnabled = item.Enabled,
+                        NewEnabled = enable, ItemLocator = item.Locator, Scope = item.Scope,
+                    });
+                    item.Enabled = enable;
+                    changed++;
+                }
+                else if (r.NeedsElevation) needAdmin++;
+                else { failed++; _log.Warn($"Bulk {(enable ? "enable" : "disable")} '{item.Name}': {r.Message}"); }
             }
-            else if (r.NeedsElevation) needAdmin++;
-            else failed++;
+            RefreshViews();
+            _recent.Add("StartupPilot", $"Bulk {(enable ? "enable" : "disable")}: {changed} changed.");
+            var msg = $"{changed} changed.";
+            if (needAdmin > 0) msg += $" {needAdmin} need administrator.";
+            if (failed > 0)    msg += $" {failed} failed (see log).";
+            if (skippedServices > 0) msg += $" {skippedServices} service item(s) skipped.";
+            _status.Set(msg, failed > 0 || needAdmin > 0 || skippedServices > 0 ? StatusKind.Warning : StatusKind.Success);
+            await SaveAsync();
         }
-        ItemsView.Refresh();
-        ServicesView.Refresh();
-        RaiseCounts();
-        _recent.Add("StartupPilot", $"Bulk {(enable ? "enable" : "disable")}: {changed} changed.");
-        var msg = $"{changed} changed.";
-        if (needAdmin > 0) msg += $" {needAdmin} need administrator.";
-        if (failed > 0)    msg += $" {failed} failed.";
-        if (skippedServices > 0) msg += $" {skippedServices} service item(s) skipped.";
-        _status.Set(msg, failed > 0 || skippedServices > 0 ? StatusKind.Warning : StatusKind.Success);
-        await SaveAsync();
+        finally { IsApplying = false; }
     }
 
-    [RelayCommand]
+    private bool CanChangeSelectedService() => SelectedService is not null && !IsApplying;
+
+    [RelayCommand(CanExecute = nameof(CanChangeSelectedService))]
     public async Task SetSelectedServiceAutomaticAsync() =>
         await SetServiceStartupTypeAsync(SelectedService, ServiceStartupType.Automatic);
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanChangeSelectedService))]
     public async Task SetSelectedServiceManualAsync() =>
         await SetServiceStartupTypeAsync(SelectedService, ServiceStartupType.Manual);
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanChangeSelectedService))]
     public async Task SetSelectedServiceDisabledAsync() =>
         await SetServiceStartupTypeAsync(SelectedService, ServiceStartupType.Disabled);
 
@@ -420,6 +528,11 @@ public sealed partial class StartupPilotViewModel : ObservableObject
         if (item.ServiceStartupType == startupType)
         {
             _status.Set($"Service is already {item.StartupTypeLabel}.", StatusKind.Info);
+            return;
+        }
+        if (!IsAdmin)
+        {
+            _status.Set("Changing a service start type requires administrator privileges.", StatusKind.Warning);
             return;
         }
         if (startupType == ServiceStartupType.Automatic)
@@ -439,103 +552,113 @@ public sealed partial class StartupPilotViewModel : ObservableObject
                 return;
         }
 
-        var oldType = item.ServiceStartupType;
-        var oldEnabled = item.Enabled;
-        var result = _controller.SetServiceStartupType(item, startupType);
-        if (result.NeedsElevation)
+        if (!TryBeginApply()) return;
+        try
         {
-            _status.Set("Administrator privileges required for that service.", StatusKind.Warning);
-            return;
-        }
-        if (!result.Success)
-        {
-            _status.Set(result.Message, StatusKind.Error);
-            return;
-        }
+            var oldType = item.ServiceStartupType;
+            var oldEnabled = item.Enabled;
+            var result = await RunControllerAsync(() => _controller.SetServiceStartupType(item, startupType));
+            if (result.NeedsElevation)
+            {
+                _status.Set("Administrator privileges required for that service.", StatusKind.Warning);
+                return;
+            }
+            if (!result.Success)
+            {
+                _status.Set(result.Message, StatusKind.Error);
+                return;
+            }
 
-        item.ServiceStartupType = startupType;
-        item.Enabled = startupType == ServiceStartupType.Automatic;
-        History.Insert(0, new StartupHistoryEntry
-        {
-            ItemName = item.Name,
-            Source = item.Source,
-            OldEnabled = oldEnabled,
-            NewEnabled = item.Enabled,
-            OldServiceStartupType = oldType,
-            NewServiceStartupType = startupType,
-            ItemLocator = item.Locator,
-            Scope = item.Scope,
-        });
-        ItemsView.Refresh();
-        ServicesView.Refresh();
-        RaiseCounts();
-        _recent.Add("StartupPilot", $"Service startup type: {item.Name} → {item.StartupTypeLabel}");
-        _status.Set(result.Message, StatusKind.Success);
-        await SaveAsync();
+            item.ServiceStartupType = startupType;
+            item.Enabled = startupType == ServiceStartupType.Automatic;
+            History.Insert(0, new StartupHistoryEntry
+            {
+                ItemName = item.Name,
+                Source = item.Source,
+                OldEnabled = oldEnabled,
+                NewEnabled = item.Enabled,
+                OldServiceStartupType = oldType,
+                NewServiceStartupType = startupType,
+                ItemLocator = item.Locator,
+                Scope = item.Scope,
+            });
+            RefreshViews();
+            _recent.Add("StartupPilot", $"Service startup type: {item.Name} → {item.StartupTypeLabel}");
+            _status.Set(result.Message, StatusKind.Success);
+            await SaveAsync();
+        }
+        finally { IsApplying = false; }
     }
 
-    [RelayCommand]
+    private bool CanUndoLast() => History.Count > 0 && !IsApplying;
+
+    [RelayCommand(CanExecute = nameof(CanUndoLast))]
     public async Task UndoLastAsync()
     {
         if (History.Count == 0) { _status.Set("Nothing to undo.", StatusKind.Info); return; }
         var last = History[0];
-        var hasServiceTypeChange = last.OldServiceStartupType.HasValue &&
-            last.NewServiceStartupType.HasValue &&
-            last.OldServiceStartupType.Value != last.NewServiceStartupType.Value;
-        if (!hasServiceTypeChange && last.OldEnabled == last.NewEnabled)
+        if (!StartupPilotLogic.IsUndoable(last))
         {
             _status.Set("Last entry has no change.", StatusKind.Info);
             return;
         }
         var item = Items.FirstOrDefault(i => i.Locator == last.ItemLocator && i.Source == last.Source);
         if (item is null) { _status.Set("Item no longer present.", StatusKind.Warning); return; }
-        if (last.Source == StartupSource.Service && last.OldServiceStartupType.HasValue)
+        if (item.NeedsElevation)
         {
-            var oldType = item.ServiceStartupType;
-            var oldEnabled = item.Enabled;
-            var rService = _controller.SetServiceStartupType(item, last.OldServiceStartupType.Value);
-            if (rService.NeedsElevation) { _status.Set("Undo requires administrator privileges.", StatusKind.Warning); return; }
-            if (!rService.Success) { _status.Set("Undo failed: " + rService.Message, StatusKind.Error); return; }
-            item.ServiceStartupType = last.OldServiceStartupType.Value;
-            item.Enabled = item.ServiceStartupType == ServiceStartupType.Automatic;
+            _status.Set("Undo requires administrator privileges.", StatusKind.Warning);
+            return;
+        }
+        if (!TryBeginApply()) return;
+        try
+        {
+            if (last.Source == StartupSource.Service && last.OldServiceStartupType.HasValue)
+            {
+                var restoreType = last.OldServiceStartupType.Value;
+                var oldType = item.ServiceStartupType;
+                var oldEnabled = item.Enabled;
+                var rService = await RunControllerAsync(() => _controller.SetServiceStartupType(item, restoreType));
+                if (rService.NeedsElevation) { _status.Set("Undo requires administrator privileges.", StatusKind.Warning); return; }
+                if (!rService.Success) { _status.Set("Undo failed: " + rService.Message, StatusKind.Error); return; }
+                item.ServiceStartupType = restoreType;
+                item.Enabled = item.ServiceStartupType == ServiceStartupType.Automatic;
+                History.RemoveAt(0);
+                History.Insert(0, new StartupHistoryEntry
+                {
+                    ItemName = item.Name, Source = item.Source,
+                    OldEnabled = oldEnabled, NewEnabled = item.Enabled,
+                    OldServiceStartupType = oldType,
+                    NewServiceStartupType = item.ServiceStartupType,
+                    ItemLocator = item.Locator, Scope = item.Scope,
+                });
+                RefreshViews();
+                _recent.Add("StartupPilot", $"Undo service startup type: {item.Name}");
+                _status.Set("Undid last change.", StatusKind.Success);
+                await SaveAsync();
+                return;
+            }
+            var oldKey = NoteKey(item);
+            var restoreEnabled = last.OldEnabled;
+            var r = await RunControllerAsync(() => _controller.Toggle(item, restoreEnabled));
+            if (r.NeedsElevation) { _status.Set("Undo requires administrator privileges.", StatusKind.Warning); return; }
+            if (!r.Success) { _status.Set("Undo failed: " + r.Message, StatusKind.Error); return; }
+            var updatedLocator = r.UpdatedLocator ?? item.Locator;
+            MigrateItemMetadata(item, oldKey, updatedLocator);
+            item.Locator = updatedLocator;
+            item.Enabled = restoreEnabled;
             History.RemoveAt(0);
             History.Insert(0, new StartupHistoryEntry
             {
                 ItemName = item.Name, Source = item.Source,
-                OldEnabled = oldEnabled, NewEnabled = item.Enabled,
-                OldServiceStartupType = oldType,
-                NewServiceStartupType = item.ServiceStartupType,
+                OldEnabled = last.NewEnabled, NewEnabled = restoreEnabled,
                 ItemLocator = item.Locator, Scope = item.Scope,
             });
-            ItemsView.Refresh();
-            ServicesView.Refresh();
-            RaiseCounts();
-            _recent.Add("StartupPilot", $"Undo service startup type: {item.Name}");
+            RefreshViews();
+            _recent.Add("StartupPilot", $"Undo: {item.Name}");
             _status.Set("Undid last change.", StatusKind.Success);
             await SaveAsync();
-            return;
         }
-        var oldKey = NoteKey(item);
-        var r = _controller.Toggle(item, last.OldEnabled);
-        if (r.NeedsElevation) { _status.Set("Undo requires administrator privileges.", StatusKind.Warning); return; }
-        if (!r.Success) { _status.Set("Undo failed: " + r.Message, StatusKind.Error); return; }
-        var updatedLocator = r.UpdatedLocator ?? item.Locator;
-        MigrateItemMetadata(item, oldKey, updatedLocator);
-        item.Locator = updatedLocator;
-        item.Enabled = last.OldEnabled;
-        History.RemoveAt(0);
-        History.Insert(0, new StartupHistoryEntry
-        {
-            ItemName = item.Name, Source = item.Source,
-            OldEnabled = last.NewEnabled, NewEnabled = last.OldEnabled,
-            ItemLocator = item.Locator, Scope = item.Scope,
-        });
-        ItemsView.Refresh();
-        ServicesView.Refresh();
-        RaiseCounts();
-        _recent.Add("StartupPilot", $"Undo: {item.Name}");
-        _status.Set("Undid last change.", StatusKind.Success);
-        await SaveAsync();
+        finally { IsApplying = false; }
     }
 
     [RelayCommand]
@@ -550,7 +673,11 @@ public sealed partial class StartupPilotViewModel : ObservableObject
             return;
         }
         try { System.Diagnostics.Process.Start("explorer.exe", $"/select,\"{path}\""); }
-        catch (Exception ex) { _log.Error("Open file location", ex); }
+        catch (Exception ex)
+        {
+            _log.Error("Open file location", ex);
+            _status.Set("Could not open Explorer.", StatusKind.Error);
+        }
     }
 
     [RelayCommand]
@@ -559,7 +686,11 @@ public sealed partial class StartupPilotViewModel : ObservableObject
         item ??= SelectedItem;
         if (item is null) return;
         try { Clipboard.SetText(item.CommandLine); _status.Set("Command line copied.", StatusKind.Success); }
-        catch (Exception ex) { _log.Error("Copy", ex); }
+        catch (Exception ex)
+        {
+            _log.Error("Copy", ex);
+            _status.Set("Clipboard is busy; try again.", StatusKind.Warning);
+        }
     }
 
     [RelayCommand]
@@ -587,7 +718,7 @@ public sealed partial class StartupPilotViewModel : ObservableObject
 
     private void MigrateItemMetadata(StartupItem item, string oldKey, string updatedLocator)
     {
-        var newKey = $"{item.Source}|{updatedLocator}";
+        var newKey = StartupPilotLogic.NoteKey(item.Source, updatedLocator);
         if (string.Equals(oldKey, newKey, StringComparison.Ordinal)) return;
 
         var hadNote = Settings.Notes.Remove(oldKey, out var note);
@@ -602,6 +733,11 @@ public sealed partial class StartupPilotViewModel : ObservableObject
     [RelayCommand]
     public void ExportHistoryCsv()
     {
+        if (History.Count == 0)
+        {
+            _status.Set("History is empty; nothing to export.", StatusKind.Info);
+            return;
+        }
         var dlg = new Microsoft.Win32.SaveFileDialog
         {
             FileName = $"startuppilot-history-{DateTime.Now:yyyyMMdd-HHmmss}.csv",
@@ -610,10 +746,11 @@ public sealed partial class StartupPilotViewModel : ObservableObject
         if (dlg.ShowDialog() != true) return;
         try
         {
-            using var w = new StreamWriter(dlg.FileName);
+            // UTF-8 with BOM so Excel reads non-ASCII item names correctly.
+            using var w = new StreamWriter(dlg.FileName, false, new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
             w.WriteLine("Timestamp,Item,Source,Scope,Old,New");
             foreach (var h in History)
-                w.WriteLine($"\"{h.TimestampDisplay}\",\"{Escape(h.ItemName)}\",\"{h.Source}\",\"{Escape(h.Scope)}\",\"{h.OldValueLabel}\",\"{h.NewValueLabel}\"");
+                w.WriteLine(StartupPilotLogic.CsvLine(h.TimestampDisplay, h.ItemName, h.Source.ToString(), h.Scope, h.OldValueLabel, h.NewValueLabel));
             _status.Set("History exported.", StatusKind.Success);
         }
         catch (Exception ex)
@@ -622,8 +759,6 @@ public sealed partial class StartupPilotViewModel : ObservableObject
             _status.Set("Export failed.", StatusKind.Error);
         }
     }
-
-    private static string Escape(string s) => (s ?? string.Empty).Replace("\"", "\"\"");
 
     [RelayCommand]
     public void RelaunchAsAdmin()

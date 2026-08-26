@@ -8,6 +8,7 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
@@ -15,44 +16,58 @@
             <StackPanel DockPanel.Dock="Left">
                 <TextBlock Style="{StaticResource TextDisplay}" Text="MonitorDesk"/>
                 <TextBlock Style="{StaticResource TextCaption}" Margin="0,4,0,0"
-                           Text="Display bounds, work areas, and numbered monitor layouts."/>
+                           Text="Display bounds, work areas, and saved monitor layouts."/>
             </StackPanel>
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-                <Button Content="Display settings" Command="{Binding OpenDisplaySettingsCommand}"/>
-                <Button Content="Copy summary" Margin="8,0,0,0" Command="{Binding CopySummaryCommand}"/>
-                <Button Content="Refresh" Margin="8,0,0,0" Style="{StaticResource PrimaryButton}" Command="{Binding RefreshCommand}"/>
+                <Button Content="Display settings" Command="{Binding OpenDisplaySettingsCommand}"
+                        ToolTip="Open the Windows Display settings page"/>
+                <Button Content="Copy summary" Margin="8,0,0,0" Command="{Binding CopySummaryCommand}"
+                        ToolTip="Copy one line per display (device, role, bounds, work area) to the clipboard"/>
+                <Button Content="Refresh" Margin="8,0,0,0" Style="{StaticResource PrimaryButton}" Command="{Binding RefreshCommand}"
+                        ToolTip="Re-read the connected displays"/>
             </StackPanel>
         </DockPanel>
 
-        <WrapPanel Grid.Row="1" Margin="0,16,0,16">
-            <Border Style="{StaticResource Card}" Width="180" Margin="0,0,12,12">
+        <ProgressBar Grid.Row="1" IsIndeterminate="True" Height="3" Margin="0,12,0,0"
+                     Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}"/>
+
+        <WrapPanel Grid.Row="2" Margin="0,12,0,16">
+            <Border Style="{StaticResource Card}" MinWidth="180" Margin="0,0,12,12">
                 <StackPanel>
                     <TextBlock Text="Displays" Style="{StaticResource TextCaption}"/>
                     <TextBlock Text="{Binding MonitorCount}" Style="{StaticResource TextTitle}"/>
                 </StackPanel>
             </Border>
-            <Border Style="{StaticResource Card}" Width="260" Margin="0,0,12,12">
+            <Border Style="{StaticResource Card}" MinWidth="260" Margin="0,0,12,12">
                 <StackPanel>
                     <TextBlock Text="Virtual desktop" Style="{StaticResource TextCaption}"/>
-                    <TextBlock Text="{Binding VirtualBoundsLabel}" Style="{StaticResource TextTitle}" FontSize="16"/>
+                    <TextBlock Text="{Binding VirtualBoundsLabel}" Style="{StaticResource TextTitle}" FontSize="16"
+                               ToolTip="Bounding box of all displays in physical pixels"/>
                 </StackPanel>
             </Border>
-            <Border Style="{StaticResource Card}" Width="220" Margin="0,0,12,12">
+            <Border Style="{StaticResource Card}" MinWidth="180" Margin="0,0,12,12">
+                <StackPanel>
+                    <TextBlock Text="Saved layouts" Style="{StaticResource TextCaption}"/>
+                    <TextBlock Text="{Binding LayoutCount}" Style="{StaticResource TextTitle}"/>
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource Card}" MinWidth="180" Margin="0,0,12,12">
                 <StackPanel>
                     <TextBlock Text="Last refresh" Style="{StaticResource TextCaption}"/>
-                    <TextBlock Text="{Binding LastRefresh, StringFormat={}{0:HH:mm:ss}}" Style="{StaticResource TextTitle}" FontSize="16"/>
+                    <TextBlock Text="{Binding LastRefresh, StringFormat={}{0:HH:mm:ss}, TargetNullValue='-'}" Style="{StaticResource TextTitle}" FontSize="16"/>
                 </StackPanel>
             </Border>
         </WrapPanel>
 
-        <Border Grid.Row="2" Style="{StaticResource Card}" Margin="0,0,0,16">
+        <Border Grid.Row="3" Style="{StaticResource Card}" Margin="0,0,0,16">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="220"/>
+                    <ColumnDefinition Width="240"/>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="28"/>
                     <ColumnDefinition Width="*"/>
@@ -63,42 +78,91 @@
                 <TextBlock Grid.Row="0" Grid.Column="0" Text="New layout name" Style="{StaticResource TextCaption}"/>
                 <TextBlock Grid.Row="0" Grid.Column="3" Text="Saved layouts" Style="{StaticResource TextCaption}"/>
 
-                <TextBox Grid.Row="1" Grid.Column="0" Text="{Binding NewLayoutName, UpdateSourceTrigger=PropertyChanged}"
-                         Margin="0,6,0,0"/>
+                <TextBox Grid.Row="1" Grid.Column="0" Margin="0,6,0,0"
+                         Text="{Binding NewLayoutName, UpdateSourceTrigger=PropertyChanged}"
+                         MaxLength="64"
+                         ToolTip="Optional name for the current arrangement. Press Enter to save.">
+                    <TextBox.InputBindings>
+                        <KeyBinding Key="Enter" Command="{Binding SaveCurrentLayoutCommand}"/>
+                    </TextBox.InputBindings>
+                </TextBox>
                 <Button Grid.Row="1" Grid.Column="1" Content="Save current" Margin="8,6,0,0"
-                        Command="{Binding SaveCurrentLayoutCommand}"/>
+                        Command="{Binding SaveCurrentLayoutCommand}"
+                        ToolTip="Save the current positions of all connected displays as a layout"/>
 
-                <ComboBox Grid.Row="1" Grid.Column="3" Margin="0,6,0,0"
-                          ItemsSource="{Binding LayoutPresets}"
-                          SelectedItem="{Binding SelectedLayout}"
-                          DisplayMemberPath="Name"/>
+                <Grid Grid.Row="1" Grid.Column="3" Margin="0,6,0,0">
+                    <ComboBox ItemsSource="{Binding LayoutPresets}"
+                              SelectedItem="{Binding SelectedLayout}"
+                              DisplayMemberPath="Name"
+                              IsEnabled="{Binding HasLayouts}"/>
+                    <TextBlock Text="No saved layouts yet"
+                               Style="{StaticResource TextCaption}"
+                               Margin="12,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False"
+                               Visibility="{Binding HasLayouts, Converter={StaticResource InverseBoolToVis}}"/>
+                </Grid>
                 <Button Grid.Row="1" Grid.Column="4" Content="Apply" Margin="8,6,0,0"
-                        Style="{StaticResource PrimaryButton}" Command="{Binding ApplyLayoutCommand}"/>
+                        Style="{StaticResource PrimaryButton}" Command="{Binding ApplyLayoutCommand}"
+                        ToolTip="Move the connected displays to the positions saved in this layout"/>
                 <Button Grid.Row="1" Grid.Column="5" Content="Remove" Margin="8,6,0,0"
-                        Command="{Binding RemoveLayoutCommand}"/>
+                        Command="{Binding RemoveLayoutCommand}"
+                        ToolTip="Delete the selected layout"/>
+
+                <StackPanel Grid.Row="2" Grid.Column="3" Grid.ColumnSpan="3" Orientation="Horizontal" Margin="0,8,0,0"
+                            Visibility="{Binding SelectedLayout, Converter={StaticResource NullToVis}}">
+                    <Border Style="{StaticResource Pill}" Background="{DynamicResource AccentSoftBrush}" Margin="0,0,8,0"
+                            Visibility="{Binding IsSelectedLayoutActive, Converter={StaticResource BoolToVis}}">
+                        <TextBlock Text="Active" Style="{StaticResource TextCaption}" Foreground="{DynamicResource AccentBrush}"/>
+                    </Border>
+                    <TextBlock Text="{Binding SelectedLayoutSummary}" Style="{StaticResource TextCaption}"
+                               VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                               ToolTip="{Binding SelectedLayoutSummary}"/>
+                </StackPanel>
+
+                <Border Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" Style="{StaticResource Pill}" Margin="0,8,0,0"
+                        Visibility="{Binding LayoutWarning, Converter={StaticResource NullToVis}}">
+                    <TextBlock Text="{Binding LayoutWarning}" Style="{StaticResource TextCaption}"
+                               Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" MaxWidth="320"/>
+                </Border>
             </Grid>
         </Border>
 
-        <Grid Grid.Row="3">
+        <Grid Grid.Row="4">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="360"/>
             </Grid.ColumnDefinitions>
 
             <Border Grid.Column="0" Style="{StaticResource Card}" Padding="0">
-                <DataGrid ItemsSource="{Binding Monitors}" SelectedItem="{Binding SelectedMonitor}" IsReadOnly="True">
-                    <DataGrid.Columns>
-                        <DataGridTextColumn Header="Monitor" Binding="{Binding DisplayLabel}" Width="110"/>
-                        <DataGridTextColumn Header="Device" Binding="{Binding DeviceName}" Width="*"/>
-                        <DataGridTextColumn Header="Role" Binding="{Binding PrimaryLabel}" Width="110"/>
-                        <DataGridTextColumn Header="Bounds" Binding="{Binding BoundsLabel}" Width="180"/>
-                        <DataGridTextColumn Header="Work area" Binding="{Binding WorkAreaLabel}" Width="180"/>
-                        <DataGridTextColumn Header="Bits" Binding="{Binding BitsPerPixel}" Width="70"/>
-                    </DataGrid.Columns>
-                </DataGrid>
+                <Grid>
+                    <DataGrid ItemsSource="{Binding Monitors}" SelectedItem="{Binding SelectedMonitor}" IsReadOnly="True"
+                              Visibility="{Binding HasMonitors, Converter={StaticResource BoolToVis}}">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Monitor" Binding="{Binding DisplayLabel}" Width="100"/>
+                            <DataGridTextColumn Header="Device" Binding="{Binding DeviceName}" Width="*">
+                                <DataGridTextColumn.ElementStyle>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+                                        <Setter Property="VerticalAlignment" Value="Center"/>
+                                    </Style>
+                                </DataGridTextColumn.ElementStyle>
+                            </DataGridTextColumn>
+                            <DataGridTextColumn Header="Role" Binding="{Binding PrimaryLabel}" Width="90"/>
+                            <DataGridTextColumn Header="Bounds" Binding="{Binding BoundsLabel}" Width="170"/>
+                            <DataGridTextColumn Header="Work area" Binding="{Binding WorkAreaLabel}" Width="170"/>
+                            <DataGridTextColumn Header="Bits" Binding="{Binding BitsPerPixel}" Width="60"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Margin="16"
+                                Visibility="{Binding HasMonitors, Converter={StaticResource InverseBoolToVis}}">
+                        <TextBlock Text="No displays detected" Style="{StaticResource TextSubtitle}" HorizontalAlignment="Center"
+                                   Foreground="{DynamicResource TextSecondaryBrush}"/>
+                        <TextBlock Text="Click Refresh to scan the connected monitors again." Style="{StaticResource TextCaption}"
+                                   HorizontalAlignment="Center" Margin="0,6,0,0"/>
+                    </StackPanel>
+                </Grid>
             </Border>
 
-            <Border Grid.Column="1" Margin="16,0,0,0">
+            <Border Grid.Column="1" Style="{StaticResource Card}" Margin="16,0,0,0">
                 <Grid>
                     <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
                                 Visibility="{Binding SelectedMonitor, Converter={StaticResource NullToVis}, ConverterParameter=invert}">
@@ -108,22 +172,32 @@
                     <StackPanel Visibility="{Binding SelectedMonitor, Converter={StaticResource NullToVis}}"
                                 DataContext="{Binding SelectedMonitor}">
                         <TextBlock Text="{Binding DisplayLabel}" Style="{StaticResource TextSubtitle}"/>
-                        <TextBlock Text="{Binding DeviceName}" FontFamily="Consolas" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                        <TextBlock Text="{Binding DeviceName}" FontFamily="Consolas" Foreground="{DynamicResource TextSecondaryBrush}"
+                                   TextTrimming="CharacterEllipsis"/>
                         <TextBlock Text="{Binding PrimaryLabel}" Foreground="{DynamicResource AccentBrush}" FontWeight="SemiBold"/>
                         <Border Background="{DynamicResource DividerBrush}" Height="1" Margin="0,14"/>
                         <TextBlock Text="Bounds" Style="{StaticResource TextCaption}"/>
                         <TextBlock Text="{Binding BoundsLabel}" FontFamily="Consolas" Margin="0,3,0,10"/>
                         <TextBlock Text="Work area" Style="{StaticResource TextCaption}"/>
                         <TextBlock Text="{Binding WorkAreaLabel}" FontFamily="Consolas" Margin="0,3,0,10"/>
-                        <TextBlock Text="Position" Style="{StaticResource TextCaption}"/>
+                        <TextBlock Text="Position (physical pixels)" Style="{StaticResource TextCaption}"/>
                         <UniformGrid Columns="2" Margin="0,3,0,10">
                             <TextBox Text="{Binding DataContext.EditX, RelativeSource={RelativeSource AncestorType=UserControl}, UpdateSourceTrigger=PropertyChanged}"
-                                     FontFamily="Consolas" Margin="0,0,4,0"/>
+                                     FontFamily="Consolas" Margin="0,0,4,0" ToolTip="Left edge (X). Press Enter to apply.">
+                                <TextBox.InputBindings>
+                                    <KeyBinding Key="Enter" Command="{Binding DataContext.ApplySelectedMonitorPositionCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"/>
+                                </TextBox.InputBindings>
+                            </TextBox>
                             <TextBox Text="{Binding DataContext.EditY, RelativeSource={RelativeSource AncestorType=UserControl}, UpdateSourceTrigger=PropertyChanged}"
-                                     FontFamily="Consolas" Margin="4,0,0,0"/>
+                                     FontFamily="Consolas" Margin="4,0,0,0" ToolTip="Top edge (Y). Press Enter to apply.">
+                                <TextBox.InputBindings>
+                                    <KeyBinding Key="Enter" Command="{Binding DataContext.ApplySelectedMonitorPositionCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"/>
+                                </TextBox.InputBindings>
+                            </TextBox>
                         </UniformGrid>
                         <Button Content="Apply position" Margin="0,0,0,10"
-                                Command="{Binding DataContext.ApplySelectedMonitorPositionCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"/>
+                                Command="{Binding DataContext.ApplySelectedMonitorPositionCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                ToolTip="Move this display so its top-left corner is at X,Y. The primary display must stay at 0,0."/>
                         <TextBlock Text="Pixel format" Style="{StaticResource TextCaption}"/>
                         <TextBlock Text="{Binding BitsPerPixel, StringFormat={}{0} bits per pixel}"/>
                     </StackPanel>

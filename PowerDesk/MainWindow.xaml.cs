@@ -7,6 +7,7 @@ using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Interop;
 using PowerDesk.Core.Models;
@@ -29,13 +30,24 @@ public partial class MainWindow : Window
     private string _navSearchQuery = string.Empty;
 
     private bool _forceClose;
+    private bool _trayHintShown;
     public void ForceClose() { _forceClose = true; Close(); }
+
+    // Keyboard shortcuts (bound from MainWindow.xaml; DataContext is the window itself).
+    public ICommand FocusSearchCommand { get; }
+    public ICommand GoDashboardCommand { get; }
+    public ICommand GoSettingsCommand { get; }
 
     public MainWindow()
     {
         InitializeComponent();
         DataContext = this;
 
+        FocusSearchCommand = new ShellCommand(() => { SearchBox.Focus(); SearchBox.SelectAll(); });
+        GoDashboardCommand = new ShellCommand(() => SelectNav("Dashboard"));
+        GoSettingsCommand  = new ShellCommand(() => SelectNav("Settings"));
+
+        RestorePlacement();
         SourceInitialized += (_, _) => ApplyNativeTitleBarTheme();
         App.Instance.ThemeService.ThemeChanged += (_, _) => ApplyNativeTitleBarTheme();
 
@@ -47,6 +59,10 @@ public partial class MainWindow : Window
                 Hide();
                 ShowInTaskbar = false;
             }
+            else if (WindowState != WindowState.Minimized && !ShowInTaskbar)
+            {
+                ShowInTaskbar = true;
+            }
             // Inform WindowSizer it can pause/resume auto-refresh.
             app.WindowSizerModule?.ViewModel?.OnShellVisibilityChanged(WindowState != WindowState.Minimized && IsVisible);
         };
@@ -57,13 +73,19 @@ public partial class MainWindow : Window
         Closing += (_, e) =>
         {
             var app = App.Instance;
+            SavePlacement();
             if (_forceClose) return;
             if (app.Settings.MinimizeToTrayOnClose)
             {
                 e.Cancel = true;
                 Hide();
                 ShowInTaskbar = false;
-                app.Tray?.ShowBalloon("PowerDesk is still running", "Right-click the tray icon to exit.");
+                // Only nag once per session; after that the user knows where the app went.
+                if (!_trayHintShown)
+                {
+                    _trayHintShown = true;
+                    app.Tray?.ShowBalloon("PowerDesk is still running", "Right-click the tray icon to exit.");
+                }
             }
         };
 
@@ -187,6 +209,55 @@ public partial class MainWindow : Window
         _moduleView?.Refresh();
     }
 
+    private void SearchBox_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key == Key.Escape)
+        {
+            SearchBox.Text = string.Empty;
+            Keyboard.ClearFocus();
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Enter)
+        {
+            // Enter opens the first matching tool.
+            var first = _moduleView?.Cast<object>().OfType<ModuleNavItem>().FirstOrDefault();
+            if (first is not null) { SelectNav(first.Id); e.Handled = true; }
+        }
+    }
+
+    // ---- Window placement persistence ----
+
+    private void RestorePlacement()
+    {
+        var p = App.Instance.Settings.Window;
+        if (p is null) return;
+        if (!p.IsUsable(SystemParameters.VirtualScreenLeft, SystemParameters.VirtualScreenTop,
+                        SystemParameters.VirtualScreenWidth, SystemParameters.VirtualScreenHeight,
+                        MinWidth, MinHeight))
+            return;
+        WindowStartupLocation = WindowStartupLocation.Manual;
+        Left = p.Left; Top = p.Top; Width = p.Width; Height = p.Height;
+        if (p.Maximized) WindowState = WindowState.Maximized;
+    }
+
+    private void SavePlacement()
+    {
+        try
+        {
+            // RestoreBounds holds the normal-state rectangle even while maximized/minimized.
+            var r = WindowState == WindowState.Normal
+                ? new Rect(Left, Top, ActualWidth, ActualHeight)
+                : RestoreBounds;
+            if (r.IsEmpty || r.Width <= 0 || r.Height <= 0) return;
+            App.Instance.Settings.Window = new WindowPlacement
+            {
+                Left = r.Left, Top = r.Top, Width = r.Width, Height = r.Height,
+                Maximized = WindowState == WindowState.Maximized,
+            };
+        }
+        catch { /* placement persistence is best-effort */ }
+    }
+
     private bool ModuleNavFilter(object obj)
     {
         if (string.IsNullOrEmpty(_navSearchQuery)) return true;
@@ -254,6 +325,16 @@ public partial class MainWindow : Window
 
     [DllImport("dwmapi.dll")]
     private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
+}
+
+/// <summary>Minimal ICommand for shell-level keyboard shortcuts.</summary>
+internal sealed class ShellCommand : ICommand
+{
+    private readonly Action _run;
+    public ShellCommand(Action run) => _run = run;
+    public event EventHandler? CanExecuteChanged { add { } remove { } }
+    public bool CanExecute(object? parameter) => true;
+    public void Execute(object? parameter) => _run();
 }
 
 public sealed class ModuleNavItem

@@ -29,4 +29,6 @@ public sealed class RecentActionsService
             while (Items.Count > Max) Items.RemoveAt(Items.Count - 1);
         });
     }
+
+    public void Clear() => UiDispatcher.Invoke(Items.Clear);
 }

@@ -2,7 +2,7 @@
 
 A modular, local-first PC tool hub for Windows - inspired by Microsoft PowerToys, designed to grow one tool at a time.
 
-Current beta release: **v0.3.1**.
+Current beta release: **v0.4.0**.
 
 PowerDesk currently includes these built-in tools:
 
@@ -60,6 +60,9 @@ PowerDesk starts unelevated. If you change something that needs administrator ri
 - Dashboard with module status, recent activity, and health indicators
 - Single-instance guard to avoid settings conflicts
 - Global hotkeys for window snapping (defaults: `Ctrl+Alt+Arrow`, `Ctrl+Alt+C`, `Ctrl+Alt+M`)
+- Shell shortcuts: `Ctrl+F` search tools, `Ctrl+1` dashboard, `Ctrl+,` settings; `F5` refreshes in most tools
+- Window size and position are remembered between runs (and kept on-screen if a monitor goes away)
+- Launching PowerDesk while it is already running brings the existing window forward
 - Saved monitor layouts and editable display positions
 - Admin-aware utilities for startup control, DNS, hosts profiles, file locks, and PATH
 - IPv4/IPv6 DNS profile handling that skips IPv6 writes when the adapter has no usable IPv6 route
@@ -77,14 +80,24 @@ cd PowerDesk
 dotnet run --project .\PowerDesk\PowerDesk.csproj
 ```
 
-Build a single-file self-contained release:
+Run the unit tests (xUnit, no admin rights needed, nothing on the machine is modified):
+
+```powershell
+dotnet test .\PowerDesk.slnx -c Release
+```
+
+Build, test, and publish a single-file self-contained release into `.\build\` in one go:
+
+```powershell
+.\build.ps1            # add -SkipTests to publish without running the suite
+```
+
+The output is `.\build\PowerDesk.exe` (plus `build-info.txt` with the version and SHA-256). Equivalent manual command:
 
 ```powershell
 dotnet publish .\PowerDesk\PowerDesk.csproj -c Release -r win-x64 --self-contained `
-  -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o ".\publish"
+  -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o ".\build"
 ```
-
-The output is `.\publish\PowerDesk.exe`.
 
 ---
 
@@ -116,5 +129,7 @@ PowerDesk is released under the [MIT License](LICENSE)
 ## Contributing
 
 PowerDesk is built to grow. Each tool is a self-contained module under `PowerDesk/Modules/<Name>/` implementing a single `IPowerDeskModule` interface. New tools can be added without touching the shell.
+
+Pure logic (parsers, validators, layout matching, history bookkeeping) lives in `Modules/<Name>/Services/<Name>Logic.cs`-style helpers so it can be covered by `PowerDesk.Tests/Modules/<Name>Tests.cs` without touching the registry, hosts file, PATH, DNS, or the screen. Please keep the suite green (`dotnet test .\PowerDesk.slnx`) and add tests for any new logic.
 
 Bug reports and ideas: open an issue.

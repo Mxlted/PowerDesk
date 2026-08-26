@@ -22,12 +22,12 @@ public sealed class ConfirmationService : IConfirmationService
 {
     public bool Confirm(string message, string title, bool destructive = false)
     {
-        Window? owner = null;
-        try { owner = System.Windows.Application.Current?.MainWindow; } catch { }
-
         MessageBoxResult result = MessageBoxResult.None;
         UiDispatcher.Invoke(() =>
         {
+            // MainWindow is a DependencyObject-backed property and must be read on the UI thread.
+            Window? owner = null;
+            try { owner = System.Windows.Application.Current?.MainWindow; } catch { }
             var image = destructive ? MessageBoxImage.Warning : MessageBoxImage.Question;
             if (owner is { IsVisible: true })
                 result = MessageBox.Show(owner, message, title, MessageBoxButton.OKCancel, image);

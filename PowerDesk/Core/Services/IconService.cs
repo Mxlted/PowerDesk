@@ -99,7 +99,7 @@ public sealed class IconService
         catch { return null; }
     }
 
-    private static string NormalizeExePath(string raw)
+    internal static string NormalizeExePath(string raw)
     {
         var s = raw.Trim();
         if (s.Length == 0) return s;

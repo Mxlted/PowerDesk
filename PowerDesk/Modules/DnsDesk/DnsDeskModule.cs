@@ -27,11 +27,8 @@ public sealed class DnsDeskModule : IPowerDeskModule
         MainView = new DnsDeskView(ViewModel);
     }
 
-    public Task InitializeAsync()
-    {
-        ViewModel.Initialize();
-        return Task.CompletedTask;
-    }
+    // The scan runs off the UI thread; awaiting it keeps startup ordering deterministic without blocking.
+    public Task InitializeAsync() => ViewModel.RefreshAsync();
 
     public Task ShutdownAsync() => Task.CompletedTask;
 }

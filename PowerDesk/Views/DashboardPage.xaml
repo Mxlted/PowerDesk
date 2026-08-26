@@ -6,25 +6,60 @@
     <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="32,24">
         <StackPanel MaxWidth="1100" HorizontalAlignment="Stretch">
 
-            <TextBlock Style="{StaticResource TextDisplay}" Text="Dashboard"/>
-            <TextBlock Style="{StaticResource TextCaption}" Margin="0,4,0,24"
-                       Text="A quick view of every tool installed in PowerDesk."/>
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0">
+                    <TextBlock Style="{StaticResource TextDisplay}" Text="Dashboard"/>
+                    <TextBlock Style="{StaticResource TextCaption}" Margin="0,4,0,0"
+                               Text="A quick view of every tool installed in PowerDesk."/>
+                </StackPanel>
+                <Border Grid.Column="1" Style="{StaticResource Pill}" VerticalAlignment="Top" Margin="0,6,0,0"
+                        x:Name="AdminPill" Visibility="Collapsed"
+                        ToolTip="PowerDesk is running with administrator rights. Every tool has full control.">
+                    <TextBlock Text="Administrator" Foreground="{DynamicResource WarningBrush}" FontSize="11" FontWeight="SemiBold"/>
+                </Border>
+            </Grid>
 
             <!-- Tool cards -->
-            <TextBlock Style="{StaticResource TextSubtitle}" Text="Tools" Margin="0,0,0,12"/>
+            <TextBlock Style="{StaticResource TextSubtitle}" Text="Tools" Margin="0,24,0,12"/>
             <ItemsControl x:Name="ToolCards">
                 <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate>
-                        <WrapPanel ItemWidth="340" ItemHeight="180"/>
+                        <!-- Fixed width, flexible height: long descriptions wrap instead of being clipped. -->
+                        <WrapPanel ItemWidth="350"/>
                     </ItemsPanelTemplate>
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
-                        <Border Style="{StaticResource Card}" Margin="0,0,16,16">
+                        <Border Style="{StaticResource Card}" Margin="0,0,16,16" MinHeight="170"
+                                Cursor="Hand" MouseLeftButtonUp="Card_MouseLeftButtonUp" Tag="{Binding Id}"
+                                AutomationProperties.Name="{Binding DisplayName}">
+                            <Border.Resources>
+                                <Style TargetType="Border" BasedOn="{StaticResource Card}">
+                                    <Style.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+                                        </Trigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Resources>
                             <DockPanel>
-                                <StackPanel DockPanel.Dock="Top">
+                                <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="0,14,0,0">
+                                    <Button Style="{StaticResource PrimaryButton}" Content="Open"
+                                            Click="OpenTool_Click" Tag="{Binding Id}"
+                                            AutomationProperties.Name="{Binding DisplayName, StringFormat=Open {0}}"/>
+                                    <Border Style="{StaticResource Pill}" Margin="10,0,0,0"
+                                            ToolTip="Some actions in this tool need administrator rights. Settings → Relaunch as administrator."
+                                            Visibility="{Binding NeedsAdminBadge, Converter={StaticResource BoolToVis}}">
+                                        <TextBlock Text="Admin unlocks more" Foreground="{DynamicResource WarningBrush}" FontSize="11"/>
+                                    </Border>
+                                </StackPanel>
+                                <StackPanel>
                                     <StackPanel Orientation="Horizontal">
-                                        <Border Width="32" Height="32" Background="{DynamicResource AccentSoftBrush}" CornerRadius="6">
+                                        <Border Width="34" Height="34" Background="{DynamicResource AccentSoftBrush}" CornerRadius="8">
                                             <Path Width="16" Height="16" Stretch="Uniform"
                                                   HorizontalAlignment="Center" VerticalAlignment="Center"
                                                   Fill="{DynamicResource AccentBrush}"
@@ -34,17 +69,8 @@
                                                    Margin="12,0,0,0" VerticalAlignment="Center"/>
                                     </StackPanel>
                                     <TextBlock Text="{Binding Description}" Style="{StaticResource TextCaption}"
-                                               Margin="0,10,0,0" TextWrapping="Wrap"/>
+                                               Margin="0,10,0,0" TextWrapping="Wrap" LineHeight="18"/>
                                 </StackPanel>
-                                <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" VerticalAlignment="Bottom" Margin="0,12,0,0">
-                                    <Button Style="{StaticResource PrimaryButton}" Content="Open"
-                                            Click="OpenTool_Click" Tag="{Binding Id}"/>
-                                    <Border Style="{StaticResource Pill}" Margin="10,0,0,0"
-                                            Visibility="{Binding NeedsAdminBadge, Converter={StaticResource BoolToVis}}">
-                                        <TextBlock Text="Admin unlocks more" Foreground="{DynamicResource WarningBrush}" FontSize="11"/>
-                                    </Border>
-                                </StackPanel>
-                                <StackPanel/>
                             </DockPanel>
                         </Border>
                     </DataTemplate>
@@ -54,59 +80,74 @@
             <!-- Health cards -->
             <TextBlock Style="{StaticResource TextSubtitle}" Text="Health" Margin="0,12,0,12"/>
             <WrapPanel>
-                <Border Style="{StaticResource Card}" Width="240" Margin="0,0,16,16">
+                <Border Style="{StaticResource Card}" Width="240" Margin="0,0,16,16"
+                        ToolTip="Top-level windows WindowSizer can currently see.">
                     <StackPanel>
                         <TextBlock Style="{StaticResource TextCaption}" Text="Open windows"/>
                         <TextBlock x:Name="StatWindows" Text="—" Style="{StaticResource TextDisplay}" Margin="0,2,0,0"/>
                     </StackPanel>
                 </Border>
-                <Border Style="{StaticResource Card}" Width="240" Margin="0,0,16,16">
+                <Border Style="{StaticResource Card}" Width="240" Margin="0,0,16,16"
+                        ToolTip="Global hotkeys registered by WindowSizer.">
                     <StackPanel>
                         <TextBlock Style="{StaticResource TextCaption}" Text="Active hotkeys"/>
                         <TextBlock x:Name="StatHotkeys" Text="—" Style="{StaticResource TextDisplay}" Margin="0,2,0,0"/>
                     </StackPanel>
                 </Border>
-                <Border Style="{StaticResource Card}" Width="240" Margin="0,0,16,16">
+                <Border Style="{StaticResource Card}" Width="240" Margin="0,0,16,16"
+                        ToolTip="Entries StartupPilot found across registry, Startup folders, and scheduled tasks.">
                     <StackPanel>
                         <TextBlock Style="{StaticResource TextCaption}" Text="Startup items"/>
                         <TextBlock x:Name="StatStartup" Text="—" Style="{StaticResource TextDisplay}" Margin="0,2,0,0"/>
                     </StackPanel>
                 </Border>
-                <Border Style="{StaticResource Card}" Width="240" Margin="0,0,16,16">
+                <Border Style="{StaticResource Card}" Width="240" Margin="0,0,16,16"
+                        ToolTip="Startup entries whose target file no longer exists.">
                     <StackPanel>
                         <TextBlock Style="{StaticResource TextCaption}" Text="Orphaned items"/>
-                        <TextBlock x:Name="StatOrphans" Text="—" Style="{StaticResource TextDisplay}"
-                                   Foreground="{DynamicResource WarningBrush}" Margin="0,2,0,0"/>
+                        <TextBlock x:Name="StatOrphans" Text="—" Style="{StaticResource TextDisplay}" Margin="0,2,0,0"/>
                     </StackPanel>
                 </Border>
             </WrapPanel>
 
             <!-- Recent actions -->
-            <TextBlock Style="{StaticResource TextSubtitle}" Text="Recent activity" Margin="0,12,0,12"/>
+            <Grid Margin="0,12,0,12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Style="{StaticResource TextSubtitle}" Text="Recent activity" VerticalAlignment="Center"/>
+                <Button Grid.Column="1" x:Name="ClearRecentButton" Style="{StaticResource GhostButton}" Content="Clear"
+                        Click="ClearRecent_Click" ToolTip="Clear the activity feed (this session only)."/>
+            </Grid>
             <Border Style="{StaticResource Card}">
-                <ItemsControl x:Name="RecentList" MaxHeight="280">
-                    <ItemsControl.Template>
-                        <ControlTemplate>
-                            <ScrollViewer VerticalScrollBarVisibility="Auto">
-                                <ItemsPresenter/>
-                            </ScrollViewer>
-                        </ControlTemplate>
-                    </ItemsControl.Template>
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate>
-                            <Grid Margin="0,4">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="70"/>
-                                    <ColumnDefinition Width="110"/>
-                                    <ColumnDefinition Width="*"/>
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="{Binding TimestampDisplay}" Foreground="{DynamicResource TextSecondaryBrush}"/>
-                                <TextBlock Grid.Column="1" Text="{Binding Module}" Foreground="{DynamicResource AccentBrush}"/>
-                                <TextBlock Grid.Column="2" Text="{Binding Description}" TextTrimming="CharacterEllipsis"/>
-                            </Grid>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
+                <Grid>
+                    <TextBlock x:Name="RecentEmpty" Style="{StaticResource TextCaption}" Margin="0,6"
+                               Text="Nothing yet. Actions you take in any tool show up here."/>
+                    <ItemsControl x:Name="RecentList" MaxHeight="280">
+                        <ItemsControl.Template>
+                            <ControlTemplate>
+                                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                    <ItemsPresenter/>
+                                </ScrollViewer>
+                            </ControlTemplate>
+                        </ItemsControl.Template>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="70"/>
+                                        <ColumnDefinition Width="120"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="{Binding TimestampDisplay}" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                    <TextBlock Grid.Column="1" Text="{Binding Module}" Foreground="{DynamicResource AccentBrush}" TextTrimming="CharacterEllipsis"/>
+                                    <TextBlock Grid.Column="2" Text="{Binding Description}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Description}"/>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </Grid>
             </Border>
 
         </StackPanel>

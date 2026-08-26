@@ -39,7 +39,7 @@ public sealed class TrayIconService : IDisposable
                 Icon = TryLoadEmbeddedIcon() ?? SystemIcons.Application,
                 Text = "PowerDesk",
             };
-            _icon.DoubleClick += (_, _) => ShowRequested?.Invoke(this, EventArgs.Empty);
+            // A single left click already shows the shell; DoubleClick would fire it a second time.
             _icon.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) ShowRequested?.Invoke(this, EventArgs.Empty); };
             _icon.ContextMenuStrip = BuildMenu();
         }
@@ -75,7 +75,7 @@ public sealed class TrayIconService : IDisposable
     {
         try
         {
-            var exe = System.Diagnostics.Process.GetCurrentProcess().MainModule?.FileName;
+            var exe = Environment.ProcessPath;
             if (!string.IsNullOrEmpty(exe))
                 return Icon.ExtractAssociatedIcon(exe);
         }
@@ -87,7 +87,18 @@ public sealed class TrayIconService : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
-        try { if (_icon is not null) { _icon.Visible = false; _icon.Dispose(); } } catch { }
+        try
+        {
+            if (_icon is not null)
+            {
+                _icon.Visible = false;
+                var ico = _icon.Icon;
+                _icon.ContextMenuStrip?.Dispose();
+                _icon.Dispose();
+                if (ico is not null && !ReferenceEquals(ico, SystemIcons.Application)) ico.Dispose();
+            }
+        }
+        catch { }
         _icon = null;
     }
 }

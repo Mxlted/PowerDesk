@@ -15,54 +15,43 @@ public sealed class RestartManagerService
     private const int ErrorMoreData = 234;
     private const int CchRmMaxAppName = 255;
     private const int CchRmMaxSvcName = 63;
-    private const int MaxRegisteredResources = 512;
+    private const int CchRmSessionKey = 32; // sizeof(GUID) * 2 hex chars, plus the terminator below
+    private const int MaxGetListAttempts = 5;
 
     public FileLockScanResult FindLockingProcesses(string path)
     {
         if (string.IsNullOrWhiteSpace(path)) return new FileLockScanResult();
-        var fullPath = Path.GetFullPath(path);
-        if (!File.Exists(fullPath) && !Directory.Exists(fullPath))
+        var fullPath = Path.GetFullPath(path.Trim());
+        var isFolder = Directory.Exists(fullPath);
+        if (!isFolder && !File.Exists(fullPath))
             throw new FileNotFoundException("Path does not exist.", fullPath);
 
-        var resources = CollectResources(fullPath, out var limited);
+        var resources = CollectResources(fullPath, isFolder, out var limited);
         if (resources.Count == 0)
-            return new FileLockScanResult { ResourceLimitReached = limited };
+            return new FileLockScanResult { ResourceLimitReached = limited, IsFolder = isFolder };
 
-        var key = new StringBuilder(32);
+        // RmStartSession writes CCH_RM_SESSION_KEY characters plus a null terminator.
+        var key = new StringBuilder(CchRmSessionKey + 1);
         var result = RmStartSession(out var handle, 0, key);
-        if (result != 0) throw new Win32Exception(result);
+        if (result != 0) throw new Win32Exception(result, "RmStartSession failed.");
 
         try
         {
             result = RmRegisterResources(handle, (uint)resources.Count, resources.ToArray(), 0, null, 0, null);
-            if (result != 0) throw new Win32Exception(result);
+            if (result != 0) throw new Win32Exception(result, "RmRegisterResources failed.");
 
-            uint needed = 0;
-            uint count = 0;
-            uint reasons = 0;
-            result = RmGetList(handle, out needed, ref count, null, ref reasons);
-            if (result == 0)
-                return new FileLockScanResult { ResourceCount = resources.Count, ResourceLimitReached = limited };
-            if (result != ErrorMoreData) throw new Win32Exception(result);
+            var processInfo = GetProcessList(handle);
+            var list = new List<LockingProcessInfo>(processInfo.Length);
+            var currentPid = Environment.ProcessId;
+            foreach (var rm in processInfo)
+                list.Add(BuildProcessInfo(rm, currentPid));
 
-            count = needed;
-            var processInfo = new RM_PROCESS_INFO[(int)count];
-            result = RmGetList(handle, out needed, ref count, processInfo, ref reasons);
-            if (result != 0) throw new Win32Exception(result);
-
-            var list = new List<LockingProcessInfo>();
-            for (var i = 0; i < (int)count; i++)
-            {
-                var rm = processInfo[i];
-                var pid = rm.Process.dwProcessId;
-                var info = BuildProcessInfo(pid, rm);
-                list.Add(info);
-            }
             return new FileLockScanResult
             {
-                Processes = list,
+                Processes = FileLockLogic.Dedupe(list),
                 ResourceCount = resources.Count,
                 ResourceLimitReached = limited,
+                IsFolder = isFolder,
             };
         }
         finally
@@ -71,11 +60,41 @@ public sealed class RestartManagerService
         }
     }
 
-    private static List<string> CollectResources(string fullPath, out bool limited)
+    /// <summary>
+    /// Standard two-call pattern: ask for the size, then fetch. Because processes can start
+    /// between the two calls, ERROR_MORE_DATA on the second call means "grow and retry".
+    /// </summary>
+    private static RM_PROCESS_INFO[] GetProcessList(uint handle)
     {
-        var resources = new List<string>(Math.Min(MaxRegisteredResources, 64));
+        uint reasons = 0;
+        uint count = 0;
+        var result = RmGetList(handle, out var needed, ref count, null, ref reasons);
+        if (result == 0) return [];
+        if (result != ErrorMoreData) throw new Win32Exception(result, "RmGetList failed.");
+
+        for (var attempt = 0; attempt < MaxGetListAttempts; attempt++)
+        {
+            if (needed == 0) return [];
+            count = needed;
+            var buffer = new RM_PROCESS_INFO[(int)count];
+            result = RmGetList(handle, out needed, ref count, buffer, ref reasons);
+            if (result == 0)
+            {
+                if (count == buffer.Length) return buffer;
+                var trimmed = new RM_PROCESS_INFO[(int)count];
+                Array.Copy(buffer, trimmed, (int)count);
+                return trimmed;
+            }
+            if (result != ErrorMoreData) throw new Win32Exception(result, "RmGetList failed.");
+        }
+        throw new Win32Exception(ErrorMoreData, "The locking process list kept changing; try scanning again.");
+    }
+
+    private static List<string> CollectResources(string fullPath, bool isFolder, out bool limited)
+    {
+        var resources = new List<string>(isFolder ? 64 : 1);
         limited = false;
-        if (File.Exists(fullPath))
+        if (!isFolder)
         {
             resources.Add(fullPath);
             return resources;
@@ -83,7 +102,7 @@ public sealed class RestartManagerService
 
         foreach (var file in EnumerateFilesSafe(fullPath))
         {
-            if (resources.Count >= MaxRegisteredResources)
+            if (resources.Count >= FileLockLogic.MaxRegisteredResources)
             {
                 limited = true;
                 break;
@@ -93,74 +112,90 @@ public sealed class RestartManagerService
         return resources;
     }
 
+    /// <summary>
+    /// Breadth-first file enumeration that skips inaccessible entries and never follows reparse
+    /// points (junctions/symlinks), which would otherwise loop forever on cyclic links.
+    /// </summary>
     private static IEnumerable<string> EnumerateFilesSafe(string root)
     {
-        var pending = new Stack<string>();
-        pending.Push(root);
+        // Files: include everything (hidden/system/OneDrive placeholders are all legitimate lock targets).
+        var fileOptions = new EnumerationOptions
+        {
+            IgnoreInaccessible = true,
+            RecurseSubdirectories = false,
+            AttributesToSkip = FileAttributes.None,
+            ReturnSpecialDirectories = false,
+        };
+        // Directories: never descend into junctions/symlinks, which can form cycles.
+        var dirOptions = new EnumerationOptions
+        {
+            IgnoreInaccessible = true,
+            RecurseSubdirectories = false,
+            AttributesToSkip = FileAttributes.ReparsePoint,
+            ReturnSpecialDirectories = false,
+        };
+
+        var pending = new Queue<string>();
+        pending.Enqueue(root);
         while (pending.Count > 0)
         {
-            var dir = pending.Pop();
-            string[] files;
-            try { files = Directory.GetFiles(dir); }
-            catch { files = []; }
+            var dir = pending.Dequeue();
+            IEnumerable<string> files;
+            try { files = Directory.EnumerateFiles(dir, "*", fileOptions).ToList(); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { files = []; }
 
             foreach (var file in files) yield return file;
 
-            string[] subdirs;
-            try { subdirs = Directory.GetDirectories(dir); }
-            catch { subdirs = []; }
-            foreach (var subdir in subdirs) pending.Push(subdir);
+            IEnumerable<string> subdirs;
+            try { subdirs = Directory.EnumerateDirectories(dir, "*", dirOptions).ToList(); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { subdirs = []; }
+            foreach (var subdir in subdirs) pending.Enqueue(subdir);
         }
     }
 
-    private static LockingProcessInfo BuildProcessInfo(int pid, RM_PROCESS_INFO rm)
+    private static LockingProcessInfo BuildProcessInfo(RM_PROCESS_INFO rm, int currentPid)
     {
+        var pid = rm.Process.dwProcessId;
+        var appName = rm.strAppName ?? string.Empty;
+        var serviceName = rm.strServiceShortName ?? string.Empty;
         string processName = string.Empty;
         string mainWindowTitle = string.Empty;
         string path = string.Empty;
         DateTime? startTime = null;
-        var restartManagerStartUtc = FileTimeToUtc(rm.Process.ProcessStartTime);
+        var restartManagerStartUtc = FileLockLogic.FileTimeToUtc(rm.Process.ProcessStartTime.dwHighDateTime, rm.Process.ProcessStartTime.dwLowDateTime);
 
         try
         {
             using var process = Process.GetProcessById(pid);
             processName = process.ProcessName;
-            mainWindowTitle = process.MainWindowTitle ?? string.Empty;
+            try { mainWindowTitle = process.MainWindowTitle ?? string.Empty; } catch { }
             try { path = process.MainModule?.FileName ?? string.Empty; } catch { }
             try { startTime = process.StartTime; } catch { }
         }
         catch
         {
-            processName = rm.strAppName;
+            // Process already exited or access denied: fall back to what Restart Manager told us.
+            processName = appName;
         }
+
+        var risk = FileLockLogic.Classify(pid, string.IsNullOrWhiteSpace(processName) ? appName : processName,
+            rm.ApplicationType == RM_APP_TYPE.RmCritical, currentPid);
 
         return new LockingProcessInfo
         {
             ProcessId = pid,
             ProcessName = processName,
-            AppName = rm.strAppName,
+            AppName = appName,
+            ServiceName = rm.ApplicationType == RM_APP_TYPE.RmService ? serviceName : string.Empty,
             MainWindowTitle = mainWindowTitle,
             ProcessPath = path,
             Restartable = rm.bRestartable,
             SessionId = rm.TSSessionId,
             StartTime = startTime ?? restartManagerStartUtc?.ToLocalTime(),
-            StartTimeUtc = restartManagerStartUtc,
+            StartTimeUtc = restartManagerStartUtc ?? startTime?.ToUniversalTime(),
+            IsCriticalSystemProcess = risk == ProcessRisk.Critical,
+            IsCurrentProcess = risk == ProcessRisk.Self,
         };
-    }
-
-    private static DateTime? FileTimeToUtc(FILETIME fileTime)
-    {
-        try
-        {
-            var high = ((long)(uint)fileTime.dwHighDateTime) << 32;
-            var low = (uint)fileTime.dwLowDateTime;
-            var ticks = high + low;
-            return ticks <= 0 ? null : DateTime.FromFileTimeUtc(ticks);
-        }
-        catch
-        {
-            return null;
-        }
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -213,7 +248,7 @@ public sealed class RestartManagerService
         uint nServices,
         string[]? rgsServiceNames);
 
-    [DllImport("rstrtmgr.dll")]
+    [DllImport("rstrtmgr.dll", CharSet = CharSet.Unicode)]
     private static extern int RmGetList(
         uint dwSessionHandle,
         out uint pnProcInfoNeeded,

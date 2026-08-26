@@ -16,19 +16,29 @@
             <StackPanel DockPanel.Dock="Left">
                 <TextBlock Style="{StaticResource TextDisplay}" Text="WindowSizer"/>
                 <TextBlock Style="{StaticResource TextCaption}" Margin="0,4,0,0"
-                           Text="Resize, snap, and move windows with pixel precision."/>
+                           Text="Resize, snap, and move windows with pixel precision. Sizes are the visible frame in physical pixels."/>
             </StackPanel>
-            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right">
+                <Border Style="{StaticResource Pill}" Margin="0,0,12,0"
+                        ToolTip="Global hotkeys currently registered with Windows.">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="Hotkeys: " Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11"/>
+                        <TextBlock Text="{Binding HotkeyStatusText}" Foreground="{DynamicResource TextPrimaryBrush}" FontSize="11"/>
+                    </StackPanel>
+                </Border>
                 <TextBlock Text="Auto-refresh" VerticalAlignment="Center"
                            Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,8,0"/>
                 <ComboBox Width="110" SelectedValuePath="Tag" SelectedValue="{Binding AutoRefreshSeconds}"
-                          ToolTip="How often the windows list refreshes automatically.">
+                          ToolTip="How often the window list refreshes automatically (paused while PowerDesk is hidden)."
+                          AutomationProperties.Name="Auto-refresh interval">
                     <ComboBoxItem Content="Off"><ComboBoxItem.Tag><sys:Int32>0</sys:Int32></ComboBoxItem.Tag></ComboBoxItem>
                     <ComboBoxItem Content="1s"><ComboBoxItem.Tag><sys:Int32>1</sys:Int32></ComboBoxItem.Tag></ComboBoxItem>
                     <ComboBoxItem Content="2s"><ComboBoxItem.Tag><sys:Int32>2</sys:Int32></ComboBoxItem.Tag></ComboBoxItem>
                     <ComboBoxItem Content="5s"><ComboBoxItem.Tag><sys:Int32>5</sys:Int32></ComboBoxItem.Tag></ComboBoxItem>
+                    <ComboBoxItem Content="10s"><ComboBoxItem.Tag><sys:Int32>10</sys:Int32></ComboBoxItem.Tag></ComboBoxItem>
                 </ComboBox>
-                <Button Content="Refresh" Margin="10,0,0,0" Command="{Binding RefreshCommand}"/>
+                <Button Content="Refresh" Margin="12,0,0,0" Command="{Binding RefreshCommand}"
+                        ToolTip="Re-scan open windows now (F5)."/>
             </StackPanel>
         </DockPanel>
 
@@ -44,14 +54,19 @@
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
-                    <StackPanel Grid.Column="0">
+                    <StackPanel Grid.Column="0" Margin="0,0,12,0">
                         <TextBlock Style="{StaticResource TextSubtitle}" Text="Edit window"/>
                         <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12"
-                                   Text="{Binding SelectedWindow.Title, FallbackValue='No window selected'}" TextTrimming="CharacterEllipsis"/>
+                                   Text="{Binding SelectedWindow.Title, FallbackValue='No window selected — pick one from the list below.'}"
+                                   TextTrimming="CharacterEllipsis"/>
                     </StackPanel>
-                    <Button Grid.Column="1" Content="Clear selection" Command="{Binding ClearSelectionCommand}"/>
+                    <Button Grid.Column="1" Content="Clear selection" Command="{Binding ClearSelectionCommand}"
+                            VerticalAlignment="Top" ToolTip="Deselect the current window."/>
                 </Grid>
                 <Grid Grid.Row="1" Margin="0,14,0,0">
+                    <Grid.InputBindings>
+                        <KeyBinding Key="Return" Command="{Binding ApplyGeometryCommand}"/>
+                    </Grid.InputBindings>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="*"/>
@@ -59,24 +74,29 @@
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
-                    <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                    <StackPanel Grid.Column="0" Margin="0,0,12,0">
                         <TextBlock Text="X" Style="{StaticResource TextCaption}"/>
-                        <TextBox Text="{Binding EditX, UpdateSourceTrigger=PropertyChanged}"/>
+                        <TextBox Text="{Binding EditX, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding HasSelection}"
+                                 ToolTip="Left edge of the visible frame, in physical pixels. Enter applies."/>
                     </StackPanel>
-                    <StackPanel Grid.Column="1" Margin="0,0,8,0">
+                    <StackPanel Grid.Column="1" Margin="0,0,12,0">
                         <TextBlock Text="Y" Style="{StaticResource TextCaption}"/>
-                        <TextBox Text="{Binding EditY, UpdateSourceTrigger=PropertyChanged}"/>
+                        <TextBox Text="{Binding EditY, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding HasSelection}"
+                                 ToolTip="Top edge of the visible frame, in physical pixels. Enter applies."/>
                     </StackPanel>
-                    <StackPanel Grid.Column="2" Margin="0,0,8,0">
+                    <StackPanel Grid.Column="2" Margin="0,0,12,0">
                         <TextBlock Text="Width" Style="{StaticResource TextCaption}"/>
-                        <TextBox Text="{Binding EditWidth, UpdateSourceTrigger=PropertyChanged}"/>
+                        <TextBox Text="{Binding EditWidth, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding HasSelection}"
+                                 ToolTip="Visible width in physical pixels (minimum 50). Enter applies."/>
                     </StackPanel>
-                    <StackPanel Grid.Column="3" Margin="0,0,8,0">
+                    <StackPanel Grid.Column="3" Margin="0,0,12,0">
                         <TextBlock Text="Height" Style="{StaticResource TextCaption}"/>
-                        <TextBox Text="{Binding EditHeight, UpdateSourceTrigger=PropertyChanged}"/>
+                        <TextBox Text="{Binding EditHeight, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding HasSelection}"
+                                 ToolTip="Visible height in physical pixels (minimum 50). Enter applies."/>
                     </StackPanel>
                     <Button Grid.Column="4" Style="{StaticResource PrimaryButton}" VerticalAlignment="Bottom"
-                            Content="Apply" Command="{Binding ApplyGeometryCommand}" MinWidth="90"/>
+                            Content="Apply" Command="{Binding ApplyGeometryCommand}" MinWidth="90"
+                            ToolTip="Move and resize the selected window to these values."/>
                 </Grid>
             </Grid>
         </Border>
@@ -90,37 +110,77 @@
 
             <!-- Windows table -->
             <Border Grid.Column="0" Style="{StaticResource Card}" Padding="0">
-                <DataGrid ItemsSource="{Binding Windows}" SelectedItem="{Binding SelectedWindow}"
-                          IsReadOnly="True" Margin="0">
-                    <DataGrid.Columns>
-                        <DataGridTemplateColumn Header="" Width="Auto" MinWidth="44">
-                            <DataGridTemplateColumn.CellTemplate>
-                                <DataTemplate>
-                                    <Image Source="{Binding Icon}" Width="16" Height="16"
-                                           Margin="10,0,0,0" SnapsToDevicePixels="True"/>
-                                </DataTemplate>
-                            </DataGridTemplateColumn.CellTemplate>
-                        </DataGridTemplateColumn>
-                        <DataGridTextColumn Header="Title"   Binding="{Binding Title}"       Width="*" />
-                        <DataGridTextColumn Header="Process" Binding="{Binding ProcessName}" Width="140"/>
-                        <DataGridTextColumn Header="X"       Binding="{Binding X}"           Width="70"/>
-                        <DataGridTextColumn Header="Y"       Binding="{Binding Y}"           Width="70"/>
-                        <DataGridTextColumn Header="W"       Binding="{Binding Width}"       Width="70"/>
-                        <DataGridTextColumn Header="H"       Binding="{Binding Height}"      Width="70"/>
-                        <DataGridTextColumn Header="Monitor" Binding="{Binding Monitor}"     Width="140"/>
-                        <DataGridTemplateColumn Header="Top" Width="60">
-                            <DataGridTemplateColumn.CellTemplate>
-                                <DataTemplate>
-                                    <Border Style="{StaticResource Pill}"
-                                            Background="{DynamicResource AccentSoftBrush}"
-                                            Visibility="{Binding IsTopmost, Converter={StaticResource BoolToVis}}">
-                                        <TextBlock Text="Pinned" Foreground="{DynamicResource AccentBrush}" FontSize="11"/>
-                                    </Border>
-                                </DataTemplate>
-                            </DataGridTemplateColumn.CellTemplate>
-                        </DataGridTemplateColumn>
-                    </DataGrid.Columns>
-                </DataGrid>
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <ProgressBar Grid.Row="0" Height="3" IsIndeterminate="True" BorderThickness="0"
+                                 Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}"/>
+                    <DataGrid Grid.Row="1" ItemsSource="{Binding Windows}" SelectedItem="{Binding SelectedWindow}"
+                              IsReadOnly="True" Margin="0" SelectionMode="Single" BorderThickness="0"
+                              AutomationProperties.Name="Open windows">
+                        <DataGrid.InputBindings>
+                            <KeyBinding Key="F5" Command="{Binding RefreshCommand}"/>
+                            <KeyBinding Key="Escape" Command="{Binding ClearSelectionCommand}"/>
+                        </DataGrid.InputBindings>
+                        <DataGrid.Columns>
+                            <DataGridTemplateColumn Header="" Width="Auto" MinWidth="44">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Image Source="{Binding Icon}" Width="16" Height="16"
+                                               Margin="10,0,0,0" SnapsToDevicePixels="True"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTextColumn Header="Title" Binding="{Binding Title}" Width="*" MinWidth="120">
+                                <DataGridTextColumn.ElementStyle>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+                                        <Setter Property="ToolTip" Value="{Binding Title}"/>
+                                        <Setter Property="VerticalAlignment" Value="Center"/>
+                                    </Style>
+                                </DataGridTextColumn.ElementStyle>
+                            </DataGridTextColumn>
+                            <DataGridTextColumn Header="Process" Binding="{Binding ProcessName}" Width="130">
+                                <DataGridTextColumn.ElementStyle>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+                                        <Setter Property="ToolTip" Value="{Binding ExePath}"/>
+                                        <Setter Property="VerticalAlignment" Value="Center"/>
+                                    </Style>
+                                </DataGridTextColumn.ElementStyle>
+                            </DataGridTextColumn>
+                            <DataGridTextColumn Header="X"       Binding="{Binding X}"          Width="64"/>
+                            <DataGridTextColumn Header="Y"       Binding="{Binding Y}"          Width="64"/>
+                            <DataGridTextColumn Header="W"       Binding="{Binding Width}"      Width="64"/>
+                            <DataGridTextColumn Header="H"       Binding="{Binding Height}"     Width="64"/>
+                            <DataGridTextColumn Header="Monitor" Binding="{Binding Monitor}"    Width="90"/>
+                            <DataGridTextColumn Header="State"   Binding="{Binding StateLabel}" Width="56"/>
+                            <DataGridTemplateColumn Header="Top" Width="66">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Border Style="{StaticResource Pill}"
+                                                Background="{DynamicResource AccentSoftBrush}"
+                                                Visibility="{Binding IsTopmost, Converter={StaticResource BoolToVis}}">
+                                            <TextBlock Text="Pinned" Foreground="{DynamicResource AccentBrush}" FontSize="11"/>
+                                        </Border>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <!-- Empty state -->
+                    <StackPanel Grid.Row="1" VerticalAlignment="Center" HorizontalAlignment="Center" Margin="24"
+                                IsHitTestVisible="False"
+                                Visibility="{Binding IsWindowListEmpty, Converter={StaticResource BoolToVis}}">
+                        <TextBlock Style="{StaticResource TextSubtitle}" Text="No windows to manage"
+                                   HorizontalAlignment="Center"/>
+                        <TextBlock Style="{StaticResource TextCaption}" Margin="0,6,0,0" TextAlignment="Center" TextWrapping="Wrap"
+                                   Text="Open another application and it will appear here. Minimized and cloaked windows are listed only once they have a visible frame."/>
+                    </StackPanel>
+                </Grid>
             </Border>
 
             <!-- Side panel -->
@@ -130,29 +190,33 @@
                     <TabItem Header="Actions">
                         <ScrollViewer VerticalScrollBarVisibility="Auto">
                             <StackPanel Margin="0,12,0,0">
-                                <TextBlock Style="{StaticResource TextSubtitle}" Text="Snap"/>
+                                <TextBlock Style="{StaticResource TextCaption}" TextWrapping="Wrap"
+                                           Text="All actions apply to the selected window and respect the monitor's taskbar area."/>
+
+                                <TextBlock Style="{StaticResource TextSubtitle}" Text="Snap" Margin="0,12,0,0"/>
                                 <UniformGrid Columns="2" Rows="2" Margin="0,10,0,0">
-                                    <Button Content="Left half"   Margin="0,0,6,6" Command="{Binding SnapLeftCommand}"/>
-                                    <Button Content="Right half"  Margin="6,0,0,6" Command="{Binding SnapRightCommand}"/>
-                                    <Button Content="Top half"    Margin="0,6,6,0" Command="{Binding SnapTopCommand}"/>
-                                    <Button Content="Bottom half" Margin="6,6,0,0" Command="{Binding SnapBottomCommand}"/>
+                                    <Button Content="Left half"   Margin="0,0,6,6" Command="{Binding SnapLeftCommand}"   ToolTip="Fill the left half of the monitor."/>
+                                    <Button Content="Right half"  Margin="6,0,0,6" Command="{Binding SnapRightCommand}"  ToolTip="Fill the right half of the monitor."/>
+                                    <Button Content="Top half"    Margin="0,6,6,0" Command="{Binding SnapTopCommand}"    ToolTip="Fill the top half of the monitor."/>
+                                    <Button Content="Bottom half" Margin="6,6,0,0" Command="{Binding SnapBottomCommand}" ToolTip="Fill the bottom half of the monitor."/>
                                 </UniformGrid>
 
                                 <TextBlock Style="{StaticResource TextSubtitle}" Text="Window" Margin="0,16,0,0"/>
                                 <UniformGrid Columns="2" Margin="0,10,0,0">
-                                    <Button Content="Center"      Margin="0,0,6,6" Command="{Binding CenterCommand}"/>
-                                    <Button Content="Bring front" Margin="6,0,0,6" Command="{Binding BringToFrontCommand}"/>
-                                    <Button Content="Maximize"    Margin="0,6,6,0" Command="{Binding MaximizeCommand}"/>
-                                    <Button Content="Restore"     Margin="6,6,0,0" Command="{Binding RestoreWindowCommand}"/>
+                                    <Button Content="Center"      Margin="0,0,6,6" Command="{Binding CenterCommand}"        ToolTip="Center on its monitor, keeping the size."/>
+                                    <Button Content="Bring front" Margin="6,0,0,6" Command="{Binding BringToFrontCommand}"  ToolTip="Restore and activate the window."/>
+                                    <Button Content="Maximize"    Margin="0,6,6,0" Command="{Binding MaximizeCommand}"      ToolTip="Maximize the window."/>
+                                    <Button Content="Restore"     Margin="6,6,0,0" Command="{Binding RestoreWindowCommand}" ToolTip="Restore a minimized or maximized window."/>
                                 </UniformGrid>
 
                                 <TextBlock Style="{StaticResource TextSubtitle}" Text="Topmost" Margin="0,16,0,0"/>
                                 <UniformGrid Columns="2" Margin="0,10,0,0">
-                                    <Button Content="Pin top"   Margin="0,0,6,0" Command="{Binding PinTopCommand}"/>
-                                    <Button Content="Unpin"     Margin="6,0,0,0" Command="{Binding UnpinTopCommand}"/>
+                                    <Button Content="Pin top"   Margin="0,0,6,0" Command="{Binding PinTopCommand}"   ToolTip="Keep the window above all others."/>
+                                    <Button Content="Unpin"     Margin="6,0,0,0" Command="{Binding UnpinTopCommand}" ToolTip="Stop keeping the window on top."/>
                                 </UniformGrid>
 
-                                <Button Content="Move to next monitor" Margin="0,12,0,0" Command="{Binding NextMonitorCommand}"/>
+                                <Button Content="Move to next monitor" Margin="0,16,0,0" Command="{Binding NextMonitorCommand}"
+                                        ToolTip="Move the window to the next monitor, keeping its relative position."/>
                             </StackPanel>
                         </ScrollViewer>
                     </TabItem>
@@ -162,7 +226,10 @@
                         <ScrollViewer VerticalScrollBarVisibility="Auto">
                             <StackPanel Margin="0,12,0,0">
                                 <TextBlock Style="{StaticResource TextSubtitle}" Text="Size presets"/>
-                                <ListBox ItemsSource="{Binding SizePresets}" SelectedItem="{Binding SelectedSizePreset}" Margin="0,8,0,0" MaxHeight="240">
+                                <TextBlock Style="{StaticResource TextCaption}" Margin="0,4,0,0" TextWrapping="Wrap"
+                                           Text="Resize the selected window in place without moving it."/>
+                                <ListBox ItemsSource="{Binding SizePresets}" SelectedItem="{Binding SelectedSizePreset}"
+                                         Margin="0,10,0,0" MaxHeight="240" AutomationProperties.Name="Size presets">
                                     <ListBox.ItemTemplate>
                                         <DataTemplate>
                                             <Grid>
@@ -170,31 +237,43 @@
                                                     <ColumnDefinition Width="*"/>
                                                     <ColumnDefinition Width="Auto"/>
                                                 </Grid.ColumnDefinitions>
-                                                <TextBlock Grid.Column="0" Text="{Binding}" VerticalAlignment="Center"/>
+                                                <TextBlock Grid.Column="0" Text="{Binding}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
                                                 <Button Grid.Column="1" Content="Apply" Style="{StaticResource GhostButton}"
                                                         Command="{Binding DataContext.ApplySizePresetCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                                                        CommandParameter="{Binding}"/>
+                                                        CommandParameter="{Binding}"
+                                                        ToolTip="Apply this size to the selected window."/>
                                             </Grid>
                                         </DataTemplate>
                                     </ListBox.ItemTemplate>
                                 </ListBox>
+                                <TextBlock Style="{StaticResource TextCaption}" Margin="0,6,0,0"
+                                           Text="No size presets. Add one below or reset to defaults."
+                                           Visibility="{Binding IsSizePresetListEmpty, Converter={StaticResource BoolToVis}}"/>
 
                                 <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                                    <Button Content="Remove" Command="{Binding RemoveSizePresetCommand}" CommandParameter="{Binding SelectedSizePreset}"/>
-                                    <Button Content="Reset to defaults" Margin="8,0,0,0" Command="{Binding ResetSizePresetsCommand}"/>
+                                    <Button Content="Remove" Command="{Binding RemoveSizePresetCommand}" CommandParameter="{Binding SelectedSizePreset}"
+                                            ToolTip="Remove the highlighted preset."/>
+                                    <Button Content="Reset to defaults" Margin="8,0,0,0" Command="{Binding ResetSizePresetsCommand}"
+                                            ToolTip="Replace all presets with the built-in list."/>
                                 </StackPanel>
 
                                 <Border Background="{DynamicResource DividerBrush}" Height="1" Margin="0,16"/>
                                 <TextBlock Text="Add preset" Style="{StaticResource TextCaption}"/>
                                 <Grid Margin="0,6,0,0">
+                                    <Grid.InputBindings>
+                                        <KeyBinding Key="Return" Command="{Binding AddSizePresetCommand}"/>
+                                    </Grid.InputBindings>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="*"/>
                                     </Grid.ColumnDefinitions>
-                                    <TextBox Grid.Column="0" Margin="0,0,6,0" Text="{Binding NewPresetName, UpdateSourceTrigger=PropertyChanged}" Tag="Name"/>
-                                    <TextBox Grid.Column="1" Margin="0,0,6,0" Text="{Binding NewPresetWidth, UpdateSourceTrigger=PropertyChanged}"/>
-                                    <TextBox Grid.Column="2"                  Text="{Binding NewPresetHeight, UpdateSourceTrigger=PropertyChanged}"/>
+                                    <TextBox Grid.Column="0" Margin="0,0,6,0" Text="{Binding NewPresetName, UpdateSourceTrigger=PropertyChanged}"
+                                             ToolTip="Optional name. Enter adds the preset." AutomationProperties.Name="Preset name"/>
+                                    <TextBox Grid.Column="1" Margin="0,0,6,0" Text="{Binding NewPresetWidth, UpdateSourceTrigger=PropertyChanged}"
+                                             ToolTip="Width in pixels." AutomationProperties.Name="Preset width"/>
+                                    <TextBox Grid.Column="2"                  Text="{Binding NewPresetHeight, UpdateSourceTrigger=PropertyChanged}"
+                                             ToolTip="Height in pixels." AutomationProperties.Name="Preset height"/>
                                 </Grid>
                                 <Button Content="Add preset" Margin="0,8,0,0" Command="{Binding AddSizePresetCommand}"/>
                             </StackPanel>
@@ -206,31 +285,44 @@
                         <ScrollViewer VerticalScrollBarVisibility="Auto">
                             <StackPanel Margin="0,12,0,0">
                                 <TextBlock Style="{StaticResource TextSubtitle}" Text="Layout presets"/>
-                                <ListBox ItemsSource="{Binding LayoutPresets}" SelectedItem="{Binding SelectedLayoutPreset}" Margin="0,8,0,0" MaxHeight="240">
+                                <TextBlock Style="{StaticResource TextCaption}" Margin="0,4,0,0" TextWrapping="Wrap"
+                                           Text="A layout stores position and size. Apply it to the selected window, or with nothing selected it targets the first window from the same app."/>
+                                <ListBox ItemsSource="{Binding LayoutPresets}" SelectedItem="{Binding SelectedLayoutPreset}"
+                                         Margin="0,10,0,0" MaxHeight="240" AutomationProperties.Name="Layout presets">
                                     <ListBox.ItemTemplate>
                                         <DataTemplate>
                                             <StackPanel>
-                                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold"/>
-                                                <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11">
-                                                    <Run Text="{Binding Width}"/><Run Text="×"/><Run Text="{Binding Height}"/><Run Text=" @ "/>
-                                                    <Run Text="{Binding X}"/><Run Text=","/><Run Text="{Binding Y}"/>
-                                                    <Run Text=" • "/><Run Text="{Binding TargetProcessName}"/>
-                                                </TextBlock>
+                                                <TextBlock Text="{Binding Name, Mode=OneWay}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock Text="{Binding Summary, Mode=OneWay}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11"
+                                                           TextTrimming="CharacterEllipsis"/>
                                             </StackPanel>
                                         </DataTemplate>
                                     </ListBox.ItemTemplate>
                                 </ListBox>
+                                <TextBlock Style="{StaticResource TextCaption}" Margin="0,6,0,0"
+                                           Text="No layouts yet. Select a window and capture its position below."
+                                           Visibility="{Binding IsLayoutListEmpty, Converter={StaticResource BoolToVis}}"/>
                                 <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
                                     <Button Content="Apply" Style="{StaticResource PrimaryButton}"
-                                            Command="{Binding ApplyLayoutCommand}" CommandParameter="{Binding SelectedLayoutPreset}"/>
+                                            Command="{Binding ApplyLayoutCommand}" CommandParameter="{Binding SelectedLayoutPreset}"
+                                            ToolTip="Apply the highlighted layout."/>
                                     <Button Content="Remove" Margin="8,0,0,0"
-                                            Command="{Binding RemoveLayoutCommand}" CommandParameter="{Binding SelectedLayoutPreset}"/>
+                                            Command="{Binding RemoveLayoutCommand}" CommandParameter="{Binding SelectedLayoutPreset}"
+                                            ToolTip="Remove the highlighted layout."/>
                                 </StackPanel>
 
                                 <Border Background="{DynamicResource DividerBrush}" Height="1" Margin="0,16"/>
                                 <TextBlock Text="Capture selected window" Style="{StaticResource TextCaption}"/>
-                                <TextBox Margin="0,6,0,0" Text="{Binding NewLayoutName, UpdateSourceTrigger=PropertyChanged}"/>
-                                <Button Content="Capture" Margin="0,8,0,0" Command="{Binding CaptureLayoutCommand}"/>
+                                <TextBox Margin="0,6,0,0" Text="{Binding NewLayoutName, UpdateSourceTrigger=PropertyChanged}"
+                                         IsEnabled="{Binding HasSelection}"
+                                         ToolTip="Optional layout name (defaults to the window title). Enter captures."
+                                         AutomationProperties.Name="Layout name">
+                                    <TextBox.InputBindings>
+                                        <KeyBinding Key="Return" Command="{Binding CaptureLayoutCommand}"/>
+                                    </TextBox.InputBindings>
+                                </TextBox>
+                                <Button Content="Capture" Margin="0,8,0,0" Command="{Binding CaptureLayoutCommand}"
+                                        ToolTip="Save the selected window's current position and size as a layout."/>
                             </StackPanel>
                         </ScrollViewer>
                     </TabItem>
@@ -240,11 +332,17 @@
                         <ScrollViewer VerticalScrollBarVisibility="Auto">
                             <StackPanel Margin="0,12,0,0">
                                 <TextBlock Style="{StaticResource TextSubtitle}" Text="Hotkeys"/>
-                                <TextBlock Style="{StaticResource TextCaption}" Margin="0,4,0,0"
-                                           Text="Press a combination in the recorder, pick an action, then Add."/>
+                                <TextBlock Style="{StaticResource TextCaption}" Margin="0,4,0,0" TextWrapping="Wrap"
+                                           Text="Global hotkeys act on whichever window is in the foreground. Press a combination in the recorder, pick an action, then Add."/>
+
+                                <Border Style="{StaticResource Pill}" Margin="0,10,0,0" Background="{DynamicResource SurfaceAltBrush}"
+                                        Visibility="{Binding HasHotkeyWarning, Converter={StaticResource BoolToVis}}">
+                                    <TextBlock Text="{Binding HotkeyWarning}" Foreground="{DynamicResource WarningBrush}" FontSize="11"
+                                               TextWrapping="Wrap" MaxWidth="300"/>
+                                </Border>
 
                                 <ListBox ItemsSource="{Binding Hotkeys}" SelectedItem="{Binding SelectedHotkey}"
-                                         Margin="0,10,0,0" MaxHeight="220">
+                                         Margin="0,10,0,0" MaxHeight="220" AutomationProperties.Name="Hotkey bindings">
                                     <ListBox.ItemTemplate>
                                         <DataTemplate>
                                             <Grid>
@@ -252,22 +350,28 @@
                                                     <ColumnDefinition Width="*"/>
                                                     <ColumnDefinition Width="Auto"/>
                                                 </Grid.ColumnDefinitions>
-                                                <StackPanel Grid.Column="0">
-                                                    <TextBlock Text="{Binding ActionLabel}" FontWeight="SemiBold"/>
-                                                    <TextBlock Text="{Binding DisplayText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11"/>
+                                                <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                                                    <TextBlock Text="{Binding ActionLabel, Mode=OneWay}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                                    <TextBlock Text="{Binding DisplayText, Mode=OneWay}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11"/>
                                                 </StackPanel>
                                                 <CheckBox Grid.Column="1" Style="{StaticResource ToggleSwitch}"
                                                           IsChecked="{Binding Enabled, Mode=OneWay}"
                                                           Click="HotkeyEnable_Click"
                                                           VerticalAlignment="Center"
-                                                          ToolTip="Enable or disable this hotkey."/>
+                                                          ToolTip="Enable or disable this hotkey."
+                                                          AutomationProperties.Name="{Binding ActionLabel, Mode=OneWay}"/>
                                             </Grid>
                                         </DataTemplate>
                                     </ListBox.ItemTemplate>
                                 </ListBox>
+                                <TextBlock Style="{StaticResource TextCaption}" Margin="0,6,0,0"
+                                           Text="No hotkeys defined. Record a combination below to add one."
+                                           Visibility="{Binding IsHotkeyListEmpty, Converter={StaticResource BoolToVis}}"/>
                                 <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                                    <Button Content="Remove" Command="{Binding RemoveHotkeyCommand}" CommandParameter="{Binding SelectedHotkey}"/>
-                                    <Button Content="Re-apply" Margin="8,0,0,0" Click="ReapplyHotkeys_Click"/>
+                                    <Button Content="Remove" Command="{Binding RemoveHotkeyCommand}" CommandParameter="{Binding SelectedHotkey}"
+                                            ToolTip="Remove the highlighted hotkey."/>
+                                    <Button Content="Re-apply" Margin="8,0,0,0" Click="ReapplyHotkeys_Click"
+                                            ToolTip="Register all enabled hotkeys with Windows again (e.g. after another app released a combination)."/>
                                 </StackPanel>
 
                                 <Border Background="{DynamicResource DividerBrush}" Height="1" Margin="0,16"/>
@@ -276,13 +380,16 @@
                                          PreviewKeyDown="HotkeyRecorder_PreviewKeyDown"
                                          IsReadOnly="True"
                                          FontFamily="Consolas"
+                                         ToolTip="Click here, then press the combination. Esc clears."
+                                         AutomationProperties.Name="Hotkey recorder"
                                          Text="{Binding RecorderText, RelativeSource={RelativeSource AncestorType=UserControl}}"/>
                                 <Grid Margin="0,8,0,0">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
-                                    <ComboBox Grid.Column="0" x:Name="ActionPicker">
+                                    <ComboBox Grid.Column="0" x:Name="ActionPicker" AutomationProperties.Name="Hotkey action"
+                                              ToolTip="What the hotkey does to the foreground window.">
                                         <ComboBoxItem Content="Snap left"   Tag="SnapLeft"/>
                                         <ComboBoxItem Content="Snap right"  Tag="SnapRight"/>
                                         <ComboBoxItem Content="Snap top"    Tag="SnapTop"/>
@@ -291,7 +398,7 @@
                                         <ComboBoxItem Content="Maximize"    Tag="Maximize"/>
                                     </ComboBox>
                                     <Button Grid.Column="1" Margin="8,0,0,0" Style="{StaticResource PrimaryButton}"
-                                            Content="Add" Click="AddHotkey_Click"/>
+                                            Content="Add" Click="AddHotkey_Click" ToolTip="Add the recorded combination with the chosen action."/>
                                 </Grid>
                             </StackPanel>
                         </ScrollViewer>

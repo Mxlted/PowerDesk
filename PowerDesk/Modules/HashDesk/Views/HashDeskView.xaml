@@ -3,7 +3,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              Background="{DynamicResource SurfaceBaseBrush}"
              Foreground="{DynamicResource TextPrimaryBrush}">
-    <Grid Margin="32,24" AllowDrop="True" Drop="Root_Drop" DragOver="Root_DragOver">
+    <Grid Margin="32,24" AllowDrop="True" Drop="Root_Drop" DragOver="Root_DragOver" Background="Transparent">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
@@ -14,29 +14,72 @@
             <StackPanel DockPanel.Dock="Left">
                 <TextBlock Style="{StaticResource TextDisplay}" Text="HashDesk"/>
                 <TextBlock Style="{StaticResource TextCaption}" Margin="0,4,0,0"
-                           Text="Compute file and text checksums locally."/>
+                           Text="Compute file and text checksums locally. Drop files anywhere on this page."/>
             </StackPanel>
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-                <Button Content="Clear" Command="{Binding ClearResultsCommand}"/>
-                <Button Content="Add files" Margin="8,0,0,0" Style="{StaticResource PrimaryButton}" Command="{Binding SelectFilesCommand}"/>
+                <Button Content="Cancel" Command="{Binding CancelCommand}" Margin="0,0,8,0"
+                        ToolTip="Stop hashing the remaining files"
+                        Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}"/>
+                <Button Content="Clear" Command="{Binding ClearResultsCommand}" ToolTip="Remove all results"/>
+                <Button Content="Add files" Margin="8,0,0,0" Style="{StaticResource PrimaryButton}" Command="{Binding SelectFilesCommand}"
+                        ToolTip="Pick one or more files to hash"/>
             </StackPanel>
         </DockPanel>
 
-        <WrapPanel Grid.Row="1" Margin="0,16,0,16">
-            <Border Style="{StaticResource Card}" Width="180" Margin="0,0,12,12">
+        <Grid Grid.Row="1" Margin="0,16,0,16">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Row="0" Grid.Column="0" Style="{StaticResource Card}" MinWidth="150" Margin="0,0,12,0">
                 <StackPanel>
                     <TextBlock Text="Results" Style="{StaticResource TextCaption}"/>
                     <TextBlock Text="{Binding ResultCount}" Style="{StaticResource TextTitle}"/>
                 </StackPanel>
             </Border>
-            <Border Style="{StaticResource Card}" Width="320" Margin="0,0,12,12">
-                <StackPanel>
-                    <TextBlock Text="Selected SHA256" Style="{StaticResource TextCaption}"/>
-                    <TextBlock Text="{Binding SelectedResult.Sha256, FallbackValue=-}" FontFamily="Consolas"
-                               TextTrimming="CharacterEllipsis"/>
-                </StackPanel>
+
+            <Border Grid.Row="0" Grid.Column="1" Style="{StaticResource Card}">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Text="Expected hash (optional)" Style="{StaticResource TextCaption}"/>
+                    <DockPanel Grid.Row="1" Margin="0,6,0,0" LastChildFill="True">
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Margin="12,0,0,0" VerticalAlignment="Center">
+                            <Border Style="{StaticResource Pill}" Visibility="{Binding FileMatch.IsMatch, Converter={StaticResource BoolToVis}}">
+                                <TextBlock Text="{Binding FileMatch.Label}" Foreground="{DynamicResource SuccessBrush}" FontSize="11"/>
+                            </Border>
+                            <Border Style="{StaticResource Pill}" Visibility="{Binding FileMatch.IsMismatch, Converter={StaticResource BoolToVis}}">
+                                <TextBlock Text="{Binding FileMatch.Label}" Foreground="{DynamicResource DangerBrush}" FontSize="11"/>
+                            </Border>
+                            <Border Style="{StaticResource Pill}" Visibility="{Binding FileMatch.IsInvalid, Converter={StaticResource BoolToVis}}"
+                                    ToolTip="{Binding FileMatch.Label}">
+                                <TextBlock Text="Not a valid digest" Foreground="{DynamicResource WarningBrush}" FontSize="11"/>
+                            </Border>
+                        </StackPanel>
+                        <TextBox Text="{Binding ExpectedHash, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas"
+                                 ToolTip="Paste a SHA256, SHA1, or MD5 digest. Case, spaces, dashes and a 0x prefix are ignored. Compared against the selected file and the text hashes."/>
+                    </DockPanel>
+                </Grid>
             </Border>
-        </WrapPanel>
+
+            <Grid Grid.Row="1" Grid.ColumnSpan="2" Margin="0,12,0,0"
+                  Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <TextBlock Grid.Row="0" Style="{StaticResource TextCaption}" TextTrimming="CharacterEllipsis"
+                           Text="{Binding CurrentFileLabel, StringFormat=Hashing {0}}"/>
+                <ProgressBar Grid.Row="1" Height="3" Minimum="0" Maximum="100" Value="{Binding Progress, Mode=OneWay}" Margin="0,6,0,0"/>
+            </Grid>
+        </Grid>
 
         <TabControl Grid.Row="2">
             <TabItem Header="Files">
@@ -47,21 +90,47 @@
                     </Grid.ColumnDefinitions>
 
                     <Border Grid.Column="0" Style="{StaticResource Card}" Padding="0">
-                        <DataGrid ItemsSource="{Binding Results}" SelectedItem="{Binding SelectedResult}" IsReadOnly="True">
-                            <DataGrid.Columns>
-                                <DataGridTextColumn Header="File" Binding="{Binding FileName}" Width="*"/>
-                                <DataGridTextColumn Header="Size" Binding="{Binding SizeLabel}" Width="90"/>
-                                <DataGridTextColumn Header="SHA256" Binding="{Binding Sha256}" Width="260"/>
-                                <DataGridTextColumn Header="Done" Binding="{Binding CompletedLabel}" Width="80"/>
-                            </DataGrid.Columns>
-                        </DataGrid>
+                        <Grid>
+                            <DataGrid ItemsSource="{Binding Results}" SelectedItem="{Binding SelectedResult}" IsReadOnly="True"
+                                      Visibility="{Binding HasResults, Converter={StaticResource BoolToVis}}">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="File" Binding="{Binding FileName}" Width="*">
+                                        <DataGridTextColumn.ElementStyle>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+                                                <Setter Property="ToolTip" Value="{Binding FilePath}"/>
+                                            </Style>
+                                        </DataGridTextColumn.ElementStyle>
+                                    </DataGridTextColumn>
+                                    <DataGridTextColumn Header="Size" Binding="{Binding SizeLabel}" Width="90"/>
+                                    <DataGridTextColumn Header="SHA256" Binding="{Binding Sha256}" Width="2*">
+                                        <DataGridTextColumn.ElementStyle>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="FontFamily" Value="Consolas"/>
+                                                <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+                                            </Style>
+                                        </DataGridTextColumn.ElementStyle>
+                                    </DataGridTextColumn>
+                                    <DataGridTextColumn Header="Done" Binding="{Binding CompletedLabel}" Width="80"/>
+                                </DataGrid.Columns>
+                            </DataGrid>
+
+                            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Margin="24"
+                                        Visibility="{Binding ShowEmptyState, Converter={StaticResource BoolToVis}}">
+                                <TextBlock Text="No files hashed yet" Style="{StaticResource TextSubtitle}"
+                                           Foreground="{DynamicResource TextSecondaryBrush}" TextAlignment="Center"/>
+                                <TextBlock Text="Drop files here or use Add files. Each file is read once for SHA256, SHA1 and MD5."
+                                           Style="{StaticResource TextCaption}" Margin="0,8,0,0" TextAlignment="Center" TextWrapping="Wrap"/>
+                            </StackPanel>
+                        </Grid>
                     </Border>
 
-                    <Border Grid.Column="1" Margin="16,0,0,0">
+                    <Border Grid.Column="1" Margin="16,0,0,0" Style="{StaticResource Card}">
                         <Grid>
                             <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
                                         Visibility="{Binding SelectedResult, Converter={StaticResource NullToVis}, ConverterParameter=invert}">
-                                <TextBlock Text="Drop files here" Style="{StaticResource TextSubtitle}" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                <TextBlock Text="No result selected" Style="{StaticResource TextSubtitle}" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                <TextBlock Text="Select a row to see all digests." Style="{StaticResource TextCaption}" Margin="0,6,0,0" TextAlignment="Center"/>
                             </StackPanel>
 
                             <ScrollViewer VerticalScrollBarVisibility="Auto"
@@ -69,16 +138,34 @@
                                 <StackPanel DataContext="{Binding SelectedResult}">
                                     <TextBlock Text="{Binding FileName}" Style="{StaticResource TextSubtitle}" TextWrapping="Wrap"/>
                                     <TextBlock Text="{Binding FilePath}" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" FontSize="12"/>
+                                    <TextBlock Style="{StaticResource TextCaption}" Margin="0,4,0,0">
+                                        <Run Text="{Binding SizeLabel, Mode=OneWay}"/><Run Text=" - hashed at "/><Run Text="{Binding CompletedLabel, Mode=OneWay}"/>
+                                    </TextBlock>
                                     <Border Background="{DynamicResource DividerBrush}" Height="1" Margin="0,12"/>
-                                    <TextBlock Text="SHA256" Style="{StaticResource TextCaption}"/>
-                                    <TextBox Text="{Binding Sha256}" IsReadOnly="True" FontFamily="Consolas" TextWrapping="Wrap"/>
-                                    <TextBlock Text="SHA1" Style="{StaticResource TextCaption}" Margin="0,10,0,0"/>
-                                    <TextBox Text="{Binding Sha1}" IsReadOnly="True" FontFamily="Consolas" TextWrapping="Wrap"/>
-                                    <TextBlock Text="MD5" Style="{StaticResource TextCaption}" Margin="0,10,0,0"/>
-                                    <TextBox Text="{Binding Md5}" IsReadOnly="True" FontFamily="Consolas" TextWrapping="Wrap"/>
-                                    <Button Content="Copy SHA256" Margin="0,12,0,0"
-                                            Command="{Binding DataContext.CopySha256Command, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                                            CommandParameter="{Binding}"/>
+
+                                    <DockPanel>
+                                        <Button DockPanel.Dock="Right" Content="Copy" ToolTip="Copy SHA256" AutomationProperties.Name="Copy SHA256"
+                                                Command="{Binding DataContext.CopyHashCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                CommandParameter="{Binding Sha256}"/>
+                                        <TextBlock Text="SHA256" Style="{StaticResource TextCaption}" VerticalAlignment="Center"/>
+                                    </DockPanel>
+                                    <TextBox Text="{Binding Sha256, Mode=OneWay}" IsReadOnly="True" FontFamily="Consolas" TextWrapping="Wrap" Margin="0,4,0,0"/>
+
+                                    <DockPanel Margin="0,10,0,0">
+                                        <Button DockPanel.Dock="Right" Content="Copy" ToolTip="Copy SHA1" AutomationProperties.Name="Copy SHA1"
+                                                Command="{Binding DataContext.CopyHashCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                CommandParameter="{Binding Sha1}"/>
+                                        <TextBlock Text="SHA1" Style="{StaticResource TextCaption}" VerticalAlignment="Center"/>
+                                    </DockPanel>
+                                    <TextBox Text="{Binding Sha1, Mode=OneWay}" IsReadOnly="True" FontFamily="Consolas" TextWrapping="Wrap" Margin="0,4,0,0"/>
+
+                                    <DockPanel Margin="0,10,0,0">
+                                        <Button DockPanel.Dock="Right" Content="Copy" ToolTip="Copy MD5" AutomationProperties.Name="Copy MD5"
+                                                Command="{Binding DataContext.CopyHashCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                CommandParameter="{Binding Md5}"/>
+                                        <TextBlock Text="MD5" Style="{StaticResource TextCaption}" VerticalAlignment="Center"/>
+                                    </DockPanel>
+                                    <TextBox Text="{Binding Md5, Mode=OneWay}" IsReadOnly="True" FontFamily="Consolas" TextWrapping="Wrap" Margin="0,4,0,0"/>
                                 </StackPanel>
                             </ScrollViewer>
                         </Grid>
@@ -99,22 +186,55 @@
                                 <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
                             <TextBox Grid.Row="0" Text="{Binding InputText, UpdateSourceTrigger=PropertyChanged}"
-                                     AcceptsReturn="True" TextWrapping="Wrap"
-                                     VerticalScrollBarVisibility="Auto" MinHeight="260"/>
-                            <Button Grid.Row="1" Content="Compute text hashes" Style="{StaticResource PrimaryButton}"
-                                    HorizontalAlignment="Right" Margin="0,12,0,0"
-                                    Command="{Binding ComputeTextHashCommand}"/>
+                                     AcceptsReturn="True" AcceptsTab="True" TextWrapping="Wrap"
+                                     VerticalScrollBarVisibility="Auto" MinHeight="200"
+                                     ToolTip="Text is hashed exactly as typed, encoded as UTF-8 without a BOM. Ctrl+Enter computes.">
+                                <TextBox.InputBindings>
+                                    <KeyBinding Key="Return" Modifiers="Control" Command="{Binding ComputeTextHashCommand}"/>
+                                </TextBox.InputBindings>
+                            </TextBox>
+                            <DockPanel Grid.Row="1" Margin="0,12,0,0">
+                                <Button DockPanel.Dock="Right" Content="Compute text hashes" Style="{StaticResource PrimaryButton}"
+                                        Command="{Binding ComputeTextHashCommand}" ToolTip="Ctrl+Enter"/>
+                                <TextBlock Text="UTF-8 without BOM. Line endings are hashed as typed." Style="{StaticResource TextCaption}" VerticalAlignment="Center"/>
+                            </DockPanel>
                         </Grid>
                     </Border>
-                    <Border Grid.Column="1" Margin="16,0,0,0">
+                    <Border Grid.Column="1" Margin="16,0,0,0" Style="{StaticResource Card}">
                         <StackPanel>
-                            <TextBlock Text="SHA256" Style="{StaticResource TextCaption}"/>
-                            <TextBox Text="{Binding TextSha256}" IsReadOnly="True" FontFamily="Consolas" TextWrapping="Wrap"/>
-                            <TextBlock Text="SHA1" Style="{StaticResource TextCaption}" Margin="0,10,0,0"/>
-                            <TextBox Text="{Binding TextSha1}" IsReadOnly="True" FontFamily="Consolas" TextWrapping="Wrap"/>
-                            <TextBlock Text="MD5" Style="{StaticResource TextCaption}" Margin="0,10,0,0"/>
-                            <TextBox Text="{Binding TextMd5}" IsReadOnly="True" FontFamily="Consolas" TextWrapping="Wrap"/>
-                            <Button Content="Copy SHA256" Margin="0,12,0,0" Command="{Binding CopyTextSha256Command}"/>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                                <Border Style="{StaticResource Pill}" Visibility="{Binding TextMatch.IsMatch, Converter={StaticResource BoolToVis}}">
+                                    <TextBlock Text="{Binding TextMatch.Label}" Foreground="{DynamicResource SuccessBrush}" FontSize="11"/>
+                                </Border>
+                                <Border Style="{StaticResource Pill}" Visibility="{Binding TextMatch.IsMismatch, Converter={StaticResource BoolToVis}}">
+                                    <TextBlock Text="{Binding TextMatch.Label}" Foreground="{DynamicResource DangerBrush}" FontSize="11"/>
+                                </Border>
+                                <Border Style="{StaticResource Pill}" Visibility="{Binding TextMatch.IsInvalid, Converter={StaticResource BoolToVis}}"
+                                        ToolTip="{Binding TextMatch.Label}">
+                                    <TextBlock Text="Not a valid digest" Foreground="{DynamicResource WarningBrush}" FontSize="11"/>
+                                </Border>
+                            </StackPanel>
+
+                            <DockPanel>
+                                <Button DockPanel.Dock="Right" Content="Copy" ToolTip="Copy SHA256" AutomationProperties.Name="Copy text SHA256"
+                                        Command="{Binding CopyHashCommand}" CommandParameter="{Binding TextSha256}"/>
+                                <TextBlock Text="SHA256" Style="{StaticResource TextCaption}" VerticalAlignment="Center"/>
+                            </DockPanel>
+                            <TextBox Text="{Binding TextSha256, Mode=OneWay}" IsReadOnly="True" FontFamily="Consolas" TextWrapping="Wrap" Margin="0,4,0,0"/>
+
+                            <DockPanel Margin="0,10,0,0">
+                                <Button DockPanel.Dock="Right" Content="Copy" ToolTip="Copy SHA1" AutomationProperties.Name="Copy text SHA1"
+                                        Command="{Binding CopyHashCommand}" CommandParameter="{Binding TextSha1}"/>
+                                <TextBlock Text="SHA1" Style="{StaticResource TextCaption}" VerticalAlignment="Center"/>
+                            </DockPanel>
+                            <TextBox Text="{Binding TextSha1, Mode=OneWay}" IsReadOnly="True" FontFamily="Consolas" TextWrapping="Wrap" Margin="0,4,0,0"/>
+
+                            <DockPanel Margin="0,10,0,0">
+                                <Button DockPanel.Dock="Right" Content="Copy" ToolTip="Copy MD5" AutomationProperties.Name="Copy text MD5"
+                                        Command="{Binding CopyHashCommand}" CommandParameter="{Binding TextMd5}"/>
+                                <TextBlock Text="MD5" Style="{StaticResource TextCaption}" VerticalAlignment="Center"/>
+                            </DockPanel>
+                            <TextBox Text="{Binding TextMd5, Mode=OneWay}" IsReadOnly="True" FontFamily="Consolas" TextWrapping="Wrap" Margin="0,4,0,0"/>
                         </StackPanel>
                     </Border>
                 </Grid>

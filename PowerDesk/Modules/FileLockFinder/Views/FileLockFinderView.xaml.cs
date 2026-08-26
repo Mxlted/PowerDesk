@@ -1,5 +1,3 @@
-using System.IO;
-using System.Linq;
 using PowerDesk.Modules.FileLockFinder.ViewModels;
 using DataFormats = System.Windows.DataFormats;
 using DragDropEffects = System.Windows.DragDropEffects;
@@ -27,10 +25,16 @@ public partial class FileLockFinderView : UserControl
 
     private void Root_Drop(object sender, DragEventArgs e)
     {
-        if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return;
-        if (e.Data.GetData(DataFormats.FileDrop) is not string[] paths) return;
-
-        var path = paths.FirstOrDefault(p => File.Exists(p) || Directory.Exists(p));
-        if (path is not null) _vm.SetTargetPathFromDrop(path);
+        try
+        {
+            if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return;
+            if (e.Data.GetData(DataFormats.FileDrop) is not string[] paths) return;
+            e.Handled = true;
+            _vm.SetTargetPathsFromDrop(paths);
+        }
+        catch
+        {
+            // Drag sources can hand over broken data objects; never let a drop crash the shell.
+        }
     }
 }

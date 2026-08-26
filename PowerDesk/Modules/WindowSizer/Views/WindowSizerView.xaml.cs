@@ -1,5 +1,7 @@
+using System;
 using System.ComponentModel;
 using System.Windows;
+using PowerDesk.Core.Services;
 using PowerDesk.Modules.WindowSizer.Models;
 using PowerDesk.Modules.WindowSizer.ViewModels;
 using static PowerDesk.Modules.WindowSizer.Services.NativeMethods;
@@ -16,12 +18,14 @@ namespace PowerDesk.Modules.WindowSizer.Views;
 
 public partial class WindowSizerView : UserControl, INotifyPropertyChanged
 {
+    private const string RecorderPrompt = "Press a combination…";
+
     public event PropertyChangedEventHandler? PropertyChanged;
 
-    private WindowSizerViewModel? _vm;
+    private readonly WindowSizerViewModel _vm;
     private uint _recordedModifiers;
     private uint _recordedVk;
-    private string _recorderText = "Press a combination…";
+    private string _recorderText = RecorderPrompt;
     public string RecorderText
     {
         get => _recorderText;
@@ -43,8 +47,15 @@ public partial class WindowSizerView : UserControl, INotifyPropertyChanged
 
         // Skip pure-modifier presses (the user is still building the chord).
         if (key is Key.LeftAlt or Key.RightAlt or Key.LeftCtrl or Key.RightCtrl
-                or Key.LeftShift or Key.RightShift or Key.LWin or Key.RWin)
+                or Key.LeftShift or Key.RightShift or Key.LWin or Key.RWin or Key.None)
         {
+            return;
+        }
+
+        if (key == Key.Escape)
+        {
+            _recordedVk = 0; _recordedModifiers = 0;
+            RecorderText = RecorderPrompt;
             return;
         }
 
@@ -58,6 +69,7 @@ public partial class WindowSizerView : UserControl, INotifyPropertyChanged
         var vk = (uint)KeyInterop.VirtualKeyFromKey(key);
         if (modFlags == 0 || vk == 0)
         {
+            _recordedVk = 0; _recordedModifiers = 0;
             RecorderText = "Add at least one modifier (Ctrl/Alt/Shift/Win) + a key.";
             return;
         }
@@ -70,43 +82,70 @@ public partial class WindowSizerView : UserControl, INotifyPropertyChanged
 
     private async void AddHotkey_Click(object sender, RoutedEventArgs e)
     {
-        if (_vm is null) return;
-        if (_recordedVk == 0 || _recordedModifiers == 0)
+        try
         {
-            App.Instance.Status.Set("Press a key combination first.", Core.Services.StatusKind.Warning);
-            return;
-        }
-        if (ActionPicker.SelectedItem is not ComboBoxItem item || item.Tag is not string tag) return;
-        if (!System.Enum.TryParse<HotkeyAction>(tag, out var action)) return;
+            if (_recordedVk == 0 || _recordedModifiers == 0)
+            {
+                App.Instance.Status.Set("Press a key combination in the recorder first.", StatusKind.Warning);
+                HotkeyRecorder.Focus();
+                return;
+            }
+            if (ActionPicker.SelectedItem is not ComboBoxItem item || item.Tag is not string tag) return;
+            if (!Enum.TryParse<HotkeyAction>(tag, out var action)) return;
 
-        var binding = new HotkeyBinding
-        {
-            Action = action,
-            Modifiers = _recordedModifiers,
-            VirtualKey = _recordedVk,
-            Enabled = true,
-        };
-        if (_vm.HasConflict(binding))
-        {
-            App.Instance.Status.Set("That combination is already used.", Core.Services.StatusKind.Warning);
-            return;
+            var binding = new HotkeyBinding
+            {
+                Action = action,
+                Modifiers = _recordedModifiers,
+                VirtualKey = _recordedVk,
+                Enabled = true,
+            };
+            if (_vm.HasConflict(binding))
+            {
+                App.Instance.Status.Set("That combination is already used.", StatusKind.Warning);
+                return;
+            }
+            await _vm.AddHotkeyAsync(binding);
+            RecorderText = RecorderPrompt;
+            _recordedVk = 0; _recordedModifiers = 0;
         }
-        await _vm.AddHotkeyAsync(binding);
-        RecorderText = "Press a combination…";
-        _recordedVk = 0; _recordedModifiers = 0;
+        catch (Exception ex)
+        {
+            App.Instance.Logger.Error("Add hotkey", ex);
+            App.Instance.Status.Set("Could not add that hotkey.", StatusKind.Error);
+        }
     }
 
-    private void ReapplyHotkeys_Click(object sender, RoutedEventArgs e) => _vm?.RefreshHotkeyRegistrations();
+    private void ReapplyHotkeys_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            _vm.RefreshHotkeyRegistrations();
+            if (!_vm.HasHotkeyWarning)
+                App.Instance.Status.Set($"Hotkeys re-registered: {_vm.HotkeyStatusText}.", StatusKind.Success);
+        }
+        catch (Exception ex)
+        {
+            App.Instance.Logger.Error("Re-apply hotkeys", ex);
+        }
+    }
 
     private async void HotkeyEnable_Click(object sender, RoutedEventArgs e)
     {
-        if (_vm is null) return;
-        if (sender is CheckBox cb && cb.DataContext is HotkeyBinding b)
+        try
         {
-            bool target = cb.IsChecked == true;
-            // Keep the visual in sync with the model until we've committed. The VM is the source of truth.
-            cb.IsChecked = b.Enabled;
-            await _vm.SetHotkeyEnabledAsync(b, target);
+            if (sender is CheckBox cb && cb.DataContext is HotkeyBinding b)
+            {
+                bool target = cb.IsChecked == true;
+                // Keep the visual in sync with the model until we've committed. The VM is the source of truth.
+                cb.IsChecked = b.Enabled;
+                await _vm.SetHotkeyEnabledAsync(b, target);
+            }
+        }
+        catch (Exception ex)
+        {
+            App.Instance.Logger.Error("Toggle hotkey", ex);
+            App.Instance.Status.Set("Could not change that hotkey.", StatusKind.Error);
         }
     }
 }

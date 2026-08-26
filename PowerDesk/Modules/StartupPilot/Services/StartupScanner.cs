@@ -20,8 +20,6 @@ namespace PowerDesk.Modules.StartupPilot.Services;
 /// </summary>
 public sealed class StartupScanner
 {
-    private const string StartupApprovedRoot = @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved";
-
     private readonly ILogger _log;
     private readonly IconService _icons;
 
@@ -54,53 +52,72 @@ public sealed class StartupScanner
         catch (Exception ex) { _log.Error("Startup scan source failed", ex); }
     }
 
+    private static RegistryKey OpenBase(RegistryHive hive) =>
+        // HKLM: force Registry64 so we read the real 64-bit keys; the Wow6432Node paths are listed
+        // explicitly so WoW redirection must not fold them in. HKCU\Software is never redirected.
+        RegistryKey.OpenBaseKey(hive, hive == RegistryHive.LocalMachine ? RegistryView.Registry64 : RegistryView.Default);
+
     // ---------- Registry ----------
 
     private static readonly (RegistryHive Hive, string Path, string Scope)[] RegistryKeys =
     {
-        (RegistryHive.CurrentUser,  @"Software\Microsoft\Windows\CurrentVersion\Run",     "HKCU\\Run"),
-        (RegistryHive.CurrentUser,  @"Software\Microsoft\Windows\CurrentVersion\RunOnce", "HKCU\\RunOnce"),
-        (RegistryHive.LocalMachine, @"Software\Microsoft\Windows\CurrentVersion\Run",     "HKLM\\Run"),
-        (RegistryHive.LocalMachine, @"Software\Microsoft\Windows\CurrentVersion\RunOnce", "HKLM\\RunOnce"),
-        (RegistryHive.LocalMachine, @"Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Run",     "HKLM\\Run (Wow64)"),
-        (RegistryHive.LocalMachine, @"Software\Wow6432Node\Microsoft\Windows\CurrentVersion\RunOnce", "HKLM\\RunOnce (Wow64)"),
+        (RegistryHive.CurrentUser,  StartupPilotLogic.RunKey,       "HKCU\\Run"),
+        (RegistryHive.CurrentUser,  StartupPilotLogic.RunOnceKey,   "HKCU\\RunOnce"),
+        (RegistryHive.LocalMachine, StartupPilotLogic.RunKey,       "HKLM\\Run"),
+        (RegistryHive.LocalMachine, StartupPilotLogic.RunOnceKey,   "HKLM\\RunOnce"),
+        (RegistryHive.LocalMachine, StartupPilotLogic.Run32Key,     "HKLM\\Run (Wow64)"),
+        (RegistryHive.LocalMachine, StartupPilotLogic.RunOnce32Key, "HKLM\\RunOnce (Wow64)"),
     };
 
     private IEnumerable<StartupItem> ScanRegistry(bool includeMicrosoft)
     {
         foreach (var (hive, path, scope) in RegistryKeys)
         {
-            // HKLM: force Registry64 so we read the real 64-bit keys; the Wow6432Node paths are
-            // listed explicitly in RegistryKeys so we don't want WoW redirection to fold them in.
-            using var baseKey = RegistryKey.OpenBaseKey(hive,
-                hive == RegistryHive.LocalMachine ? RegistryView.Registry64 : RegistryView.Default);
-            using var key = baseKey.OpenSubKey(path, writable: false);
-            if (key is null) continue;
+            foreach (var item in ScanRegistryKey(hive, path, scope, includeMicrosoft, parkedAsDisabled: false))
+                yield return item;
+            // Values parked under <key>\AutorunsDisabled (Autoruns convention, also used by our controller
+            // for keys without StartupApproved support) are disabled entries.
+            foreach (var item in ScanRegistryKey(hive, StartupPilotLogic.AutorunsDisabledKeyFor(path), scope, includeMicrosoft, parkedAsDisabled: true))
+                yield return item;
+        }
+    }
 
-            foreach (var rawName in key.GetValueNames())
+    private IEnumerable<StartupItem> ScanRegistryKey(RegistryHive hive, string path, string scope, bool includeMicrosoft, bool parkedAsDisabled)
+    {
+        using var baseKey = OpenBase(hive);
+        using var key = baseKey.OpenSubKey(path, writable: false);
+        if (key is null) yield break;
+
+        var approvedSubkey = parkedAsDisabled ? null : StartupPilotLogic.StartupApprovedSubkeyForRegistryPath(path);
+        foreach (var name in key.GetValueNames())
+        {
+            if (string.IsNullOrEmpty(name)) continue; // the (Default) value is never executed
+            string cmd;
+            try { cmd = key.GetValue(name)?.ToString() ?? string.Empty; }
+            catch (Exception ex) { _log.Warn($"Registry value '{path}\\{name}': {ex.Message}"); continue; }
+
+            // Windows runs every value in a Run key regardless of its name; the only state it honours is
+            // StartupApproved (Task Manager). A leading '!' in RunOnce means "wait for completion", not disabled.
+            bool enabled = !parkedAsDisabled;
+            if (approvedSubkey is not null)
             {
-                if (string.IsNullOrEmpty(rawName)) continue;
-                var cmd = key.GetValue(rawName)?.ToString() ?? string.Empty;
-                var legacyDisabled = rawName.StartsWith("!", StringComparison.Ordinal);
-                var name = legacyDisabled ? rawName.TrimStart('!') : rawName;
-                bool enabled = !legacyDisabled;
-                var approved = ReadStartupApprovedState(hive, StartupApprovedSubkeyForRegistryPath(path), name);
-                if (approved.HasValue) enabled = approved.Value && !legacyDisabled;
-
-                if (!includeMicrosoft && LooksLikeMicrosoft(cmd, name)) continue;
-
-                yield return new StartupItem
-                {
-                    Source = StartupSource.Registry,
-                    Scope = scope,
-                    Name = name,
-                    CommandLine = cmd,
-                    TargetPath = ExtractExecutablePath(cmd),
-                    Enabled = enabled,
-                    Locator = $"{hive}|{path}|{rawName}",
-                    RequiresAdmin = hive == RegistryHive.LocalMachine,
-                };
+                var approved = ReadStartupApprovedState(hive, approvedSubkey, name);
+                if (approved.HasValue) enabled = approved.Value;
             }
+
+            if (!includeMicrosoft && StartupPilotLogic.LooksLikeMicrosoft(cmd, name)) continue;
+
+            yield return new StartupItem
+            {
+                Source = StartupSource.Registry,
+                Scope = scope,
+                Name = name,
+                CommandLine = cmd,
+                TargetPath = ExtractExecutablePath(cmd),
+                Enabled = enabled,
+                Locator = StartupPilotLogic.FormatRegistryLocator(hive, path, name),
+                RequiresAdmin = hive == RegistryHive.LocalMachine,
+            };
         }
     }
 
@@ -113,6 +130,7 @@ public sealed class StartupScanner
 
         foreach (var (folder, scope, admin) in new[] { (perUser, "Startup (User)", false), (allUsers, "Startup (All Users)", true) })
         {
+            if (string.IsNullOrWhiteSpace(folder)) continue;
             foreach (var item in ScanStartupFolder(folder, scope, admin, includeMicrosoft, isDisabled: false))
                 yield return item;
             var disabledDir = Path.Combine(folder, "Disabled");
@@ -125,20 +143,27 @@ public sealed class StartupScanner
     private IEnumerable<StartupItem> ScanStartupFolder(string folder, string scope, bool admin, bool includeMicrosoft, bool isDisabled)
     {
         if (!Directory.Exists(folder)) yield break;
-        IEnumerable<string> files;
-        try { files = Directory.EnumerateFiles(folder, "*.lnk", SearchOption.TopDirectoryOnly); }
+        List<string> files;
+        try { files = Directory.EnumerateFiles(folder, "*", SearchOption.TopDirectoryOnly).ToList(); }
         catch (Exception ex) { _log.Warn($"Startup folder enum: {folder}: {ex.Message}"); yield break; }
 
         foreach (var file in files)
         {
-            string target = ResolveShortcut(file);
+            var fileName = Path.GetFileName(file);
+            if (fileName.Equals("desktop.ini", StringComparison.OrdinalIgnoreCase)) continue;
+
+            // Explorer launches every file in the folder, not just shortcuts (.exe, .bat, .url, ... all run).
+            bool isShortcut = fileName.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase);
+            string command = isShortcut ? ResolveShortcut(file) : $"\"{file}\"";
             string name = Path.GetFileNameWithoutExtension(file);
-            if (!includeMicrosoft && LooksLikeMicrosoft(target, name)) continue;
+            if (!includeMicrosoft && StartupPilotLogic.LooksLikeMicrosoft(command, name)) continue;
+
             bool enabled = !isDisabled;
             if (!isDisabled)
             {
+                // Task Manager keys StartupApproved\StartupFolder by the file name including its extension.
                 var approvedHive = admin ? RegistryHive.LocalMachine : RegistryHive.CurrentUser;
-                var approved = ReadStartupApprovedState(approvedHive, "StartupFolder", Path.GetFileName(file));
+                var approved = ReadStartupApprovedState(approvedHive, "StartupFolder", fileName);
                 if (approved.HasValue) enabled = approved.Value;
             }
             yield return new StartupItem
@@ -146,8 +171,8 @@ public sealed class StartupScanner
                 Source = StartupSource.StartupFolder,
                 Scope = scope,
                 Name = name,
-                CommandLine = target,
-                TargetPath = ExtractExecutablePath(target),
+                CommandLine = command,
+                TargetPath = ExtractExecutablePath(command),
                 Enabled = enabled,
                 Locator = file,
                 RequiresAdmin = admin,
@@ -184,56 +209,77 @@ public sealed class StartupScanner
         catch (Exception ex) { _log.Warn($"TaskService init: {ex.Message}"); yield break; }
         using (ts)
         {
-            IEnumerable<Microsoft.Win32.TaskScheduler.Task> all;
-            try { all = ts.AllTasks; }
+            IEnumerator<ScheduledTask> e;
+            try { e = ts.AllTasks.GetEnumerator(); }
             catch (Exception ex) { _log.Warn($"TaskService enum: {ex.Message}"); yield break; }
-            foreach (var t in all)
+
+            using (e)
             {
-                StartupItem? item = null;
-                try
+                while (true)
                 {
-                    // Only login or boot triggers count as "startup".
-                    var triggers = t.Definition.Triggers;
-                    bool relevant = false;
-                    foreach (var tr in triggers)
+                    ScheduledTask t;
+                    // AllTasks walks folders lazily; a folder the current user can't read throws from MoveNext,
+                    // which must not discard the tasks already collected.
+                    try
                     {
-                        if (tr.TriggerType == TaskTriggerType.Logon || tr.TriggerType == TaskTriggerType.Boot)
-                        { relevant = true; break; }
+                        if (!e.MoveNext()) break;
+                        t = e.Current;
                     }
-                    if (!relevant) { continue; }
+                    catch (Exception ex) { _log.Warn($"TaskService enum: {ex.Message}"); break; }
 
-                    var path = t.Path;
-                    if (!includeMicrosoft && (path.StartsWith(@"\Microsoft\", StringComparison.OrdinalIgnoreCase)
-                                              || path.Equals(@"\MicrosoftEdgeUpdate", StringComparison.OrdinalIgnoreCase)))
-                        continue;
-
-                    var action = t.Definition.Actions.Count > 0 ? t.Definition.Actions[0] : null;
-                    var actionStr = action?.ToString() ?? string.Empty;
-                    string exe = string.Empty;
-                    if (action is ExecAction exec)
-                    {
-                        exe = exec.Path ?? string.Empty;
-                        actionStr = string.IsNullOrEmpty(exec.Arguments) ? exe : $"\"{exe}\" {exec.Arguments}";
-                    }
-
-                    item = new StartupItem
-                    {
-                        Source = StartupSource.TaskScheduler,
-                        Scope = "Scheduled Task",
-                        Name = t.Name,
-                        Description = t.Definition.RegistrationInfo.Description ?? string.Empty,
-                        Publisher = t.Definition.RegistrationInfo.Author ?? string.Empty,
-                        CommandLine = actionStr,
-                        TargetPath = ExtractExecutablePath(exe.Length > 0 ? exe : actionStr),
-                        Enabled = t.Enabled,
-                        Locator = t.Path,
-                        RequiresAdmin = true, // disabling/enabling a task that's not yours generally needs elevation
-                    };
+                    StartupItem? item = null;
+                    try { item = BuildTaskItem(t, includeMicrosoft); }
+                    catch (Exception ex) { _log.Warn($"Task scan '{SafeTaskPath(t)}': {ex.Message}"); }
+                    finally { try { t.Dispose(); } catch { } }
+                    if (item is not null) yield return item;
                 }
-                catch (Exception ex) { _log.Warn($"Task scan '{t.Path}': {ex.Message}"); }
-                if (item is not null) yield return item;
             }
         }
+    }
+
+    private static string SafeTaskPath(ScheduledTask t)
+    {
+        try { return t.Path; } catch { return "?"; }
+    }
+
+    private static StartupItem? BuildTaskItem(ScheduledTask t, bool includeMicrosoft)
+    {
+        // Only login or boot triggers count as "startup".
+        bool relevant = false;
+        foreach (var tr in t.Definition.Triggers)
+        {
+            if (tr.TriggerType == TaskTriggerType.Logon || tr.TriggerType == TaskTriggerType.Boot)
+            { relevant = true; break; }
+        }
+        if (!relevant) return null;
+
+        var path = t.Path;
+        if (!includeMicrosoft && (path.StartsWith(@"\Microsoft\", StringComparison.OrdinalIgnoreCase)
+                                  || path.Equals(@"\MicrosoftEdgeUpdate", StringComparison.OrdinalIgnoreCase)))
+            return null;
+
+        var action = t.Definition.Actions.Count > 0 ? t.Definition.Actions[0] : null;
+        var actionStr = action?.ToString() ?? string.Empty;
+        string exe = string.Empty;
+        if (action is ExecAction exec)
+        {
+            exe = exec.Path ?? string.Empty;
+            actionStr = string.IsNullOrEmpty(exec.Arguments) ? exe : $"\"{exe}\" {exec.Arguments}";
+        }
+
+        return new StartupItem
+        {
+            Source = StartupSource.TaskScheduler,
+            Scope = "Scheduled Task",
+            Name = t.Name,
+            Description = t.Definition.RegistrationInfo.Description ?? string.Empty,
+            Publisher = t.Definition.RegistrationInfo.Author ?? string.Empty,
+            CommandLine = actionStr,
+            TargetPath = ExtractExecutablePath(exe.Length > 0 ? $"\"{exe}\"" : actionStr),
+            Enabled = t.Enabled,
+            Locator = path,
+            RequiresAdmin = true, // disabling/enabling a task that's not yours generally needs elevation
+        };
     }
 
     // ---------- Services ----------
@@ -250,24 +296,18 @@ public sealed class StartupScanner
             try
             {
                 using var key = Registry.LocalMachine.OpenSubKey($@"SYSTEM\CurrentControlSet\Services\{sc.ServiceName}", writable: false);
-                if (key is null) { sc.Dispose(); continue; }
-                int start = (int)(key.GetValue("Start") ?? 4);
-                var startupType = start switch
-                {
-                    2 => ServiceStartupType.Automatic,
-                    3 => ServiceStartupType.Manual,
-                    4 => ServiceStartupType.Disabled,
-                    _ => ServiceStartupType.Unknown,
-                };
-                if (startupType == ServiceStartupType.Unknown) { sc.Dispose(); continue; }
+                if (key is null) continue;
+                int start = key.GetValue("Start") is int s ? s : 4;
+                var startupType = StartupPilotLogic.ServiceStartupTypeFromStartValue(start);
+                if (startupType == ServiceStartupType.Unknown) continue;
 
                 string path = (key.GetValue("ImagePath") as string) ?? string.Empty;
                 path = Environment.ExpandEnvironmentVariables(path);
                 string desc = (key.GetValue("Description") as string) ?? string.Empty;
-                if (desc.StartsWith("@")) desc = string.Empty; // mui ref, skip
-                string display = sc.DisplayName ?? sc.ServiceName;
+                if (desc.StartsWith('@')) desc = string.Empty; // MUI resource reference, not readable text
+                string display = string.IsNullOrWhiteSpace(sc.DisplayName) ? sc.ServiceName : sc.DisplayName;
 
-                if (!includeMicrosoft && LooksLikeMicrosoft(path, display)) { sc.Dispose(); continue; }
+                if (!includeMicrosoft && StartupPilotLogic.LooksLikeMicrosoft(path, display)) continue;
 
                 item = new StartupItem
                 {
@@ -284,7 +324,7 @@ public sealed class StartupScanner
                 };
             }
             catch (Exception ex) { _log.Warn($"Service '{sc.ServiceName}': {ex.Message}"); }
-            sc.Dispose();
+            finally { sc.Dispose(); }
             if (item is not null) yield return item;
         }
     }
@@ -299,13 +339,7 @@ public sealed class StartupScanner
             if (!string.IsNullOrEmpty(path) && File.Exists(path))
             {
                 var fi = new FileInfo(path);
-                long size = fi.Length;
-                item.Impact = size switch
-                {
-                    > 50L * 1024 * 1024 => StartupImpact.High,
-                    > 10L * 1024 * 1024 => StartupImpact.Medium,
-                    _                    => StartupImpact.Low,
-                };
+                item.Impact = StartupPilotLogic.ImpactFromFileSize(fi.Length);
                 item.Icon = _icons.GetIcon(path);
                 try
                 {
@@ -329,42 +363,14 @@ public sealed class StartupScanner
 
     // ---------- helpers ----------
 
-    private static bool LooksLikeMicrosoft(string commandOrPath, string name)
-    {
-        var s = (commandOrPath ?? string.Empty).ToLowerInvariant();
-        if (s.Contains(@"\windows\system32") || s.Contains(@"\windows\syswow64") || s.Contains(@"\windowsapps\microsoft")
-            || s.Contains(@"\microsoft\edge") || s.Contains(@"\microsoft\onedrive"))
-            return true;
-        var lname = (name ?? string.Empty).ToLowerInvariant();
-        return lname.StartsWith("microsoft ") || lname.StartsWith("windows ");
-    }
-
-    private static string? StartupApprovedSubkeyForRegistryPath(string runKeyPath)
-    {
-        if (runKeyPath.Equals(@"Software\Microsoft\Windows\CurrentVersion\Run", StringComparison.OrdinalIgnoreCase))
-            return "Run";
-        if (runKeyPath.Equals(@"Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Run", StringComparison.OrdinalIgnoreCase))
-            return "Run32";
-        return null;
-    }
-
     private static bool? ReadStartupApprovedState(RegistryHive hive, string? approvedSubkey, string valueName)
     {
         if (string.IsNullOrWhiteSpace(approvedSubkey) || string.IsNullOrWhiteSpace(valueName)) return null;
         try
         {
-            using var baseKey = RegistryKey.OpenBaseKey(hive,
-                hive == RegistryHive.LocalMachine ? RegistryView.Registry64 : RegistryView.Default);
-            using var key = baseKey.OpenSubKey($@"{StartupApprovedRoot}\{approvedSubkey}", writable: false);
-            var data = key?.GetValue(valueName) as byte[];
-            if (data is null || data.Length == 0) return null;
-            var state = data.Length >= 4 ? BitConverter.ToInt32(data, 0) : data[0];
-            return state switch
-            {
-                2 => true,
-                3 => false,
-                _ => null,
-            };
+            using var baseKey = OpenBase(hive);
+            using var key = baseKey.OpenSubKey($@"{StartupPilotLogic.StartupApprovedRoot}\{approvedSubkey}", writable: false);
+            return StartupPilotLogic.ParseStartupApprovedBlob(key?.GetValue(valueName) as byte[]);
         }
         catch
         {
@@ -372,26 +378,22 @@ public sealed class StartupScanner
         }
     }
 
-    public static string ExtractExecutablePath(string command)
+    private static readonly Lazy<IReadOnlyList<string>> SearchDirs = new(() =>
     {
-        if (string.IsNullOrWhiteSpace(command)) return string.Empty;
-        var s = Environment.ExpandEnvironmentVariables(command.Trim());
-        if (s.StartsWith("\""))
+        var dirs = new List<string>();
+        void Add(string? d) { if (!string.IsNullOrWhiteSpace(d) && !dirs.Contains(d, StringComparer.OrdinalIgnoreCase)) dirs.Add(d); }
+        try
         {
-            int end = s.IndexOf('"', 1);
-            if (end > 1) return Environment.ExpandEnvironmentVariables(s.Substring(1, end - 1));
+            Add(Environment.GetFolderPath(Environment.SpecialFolder.System));
+            Add(Environment.GetFolderPath(Environment.SpecialFolder.Windows));
+            Add(Environment.GetFolderPath(Environment.SpecialFolder.SystemX86));
+            foreach (var p in (Environment.GetEnvironmentVariable("PATH") ?? string.Empty).Split(';', StringSplitOptions.RemoveEmptyEntries))
+                Add(p.Trim().Trim('"'));
         }
+        catch { }
+        return dirs;
+    });
 
-        // Many startup entries omit quotes around paths under "Program Files".
-        // Prefer the first executable-looking prefix before falling back to the first token.
-        foreach (var ext in new[] { ".exe", ".com", ".bat", ".cmd" })
-        {
-            var end = s.IndexOf(ext, StringComparison.OrdinalIgnoreCase);
-            if (end > 0)
-                return s[..(end + ext.Length)].Trim();
-        }
-
-        int sp = s.IndexOf(' ');
-        return (sp > 0 ? s[..sp] : s).Trim();
-    }
+    public static string ExtractExecutablePath(string command) =>
+        StartupPilotLogic.ExtractExecutablePath(command, File.Exists, SearchDirs.Value);
 }

@@ -1,10 +1,12 @@
 using System;
 using System.Collections.Generic;
+using System.Text.Json.Serialization;
 using System.Windows.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 
 namespace PowerDesk.Modules.WindowSizer.Models;
 
+/// <summary>A top-level window. Geometry is the visible frame in physical pixels.</summary>
 public sealed partial class WindowInfo : ObservableObject
 {
     public IntPtr Handle { get; init; }
@@ -13,15 +15,20 @@ public sealed partial class WindowInfo : ObservableObject
     public string ExePath { get; init; } = string.Empty;
     public int ProcessId { get; init; }
 
-    [ObservableProperty] private int _x;
-    [ObservableProperty] private int _y;
-    [ObservableProperty] private int _width;
-    [ObservableProperty] private int _height;
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(Geometry))] private int _x;
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(Geometry))] private int _y;
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(Geometry))] private int _width;
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(Geometry))] private int _height;
     [ObservableProperty] private bool _isTopmost;
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(StateLabel))] private bool _isMinimized;
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(StateLabel))] private bool _isMaximized;
     [ObservableProperty] private string _monitor = string.Empty;
     [ObservableProperty] private BitmapSource? _icon;
 
     public string Geometry => $"{Width} × {Height} @ {X},{Y}";
+
+    /// <summary>Short state word for the grid; empty for a normal window.</summary>
+    public string StateLabel => IsMinimized ? "Min" : IsMaximized ? "Max" : string.Empty;
 }
 
 public sealed class SizePreset
@@ -41,6 +48,17 @@ public sealed class LayoutPreset
     public int Width { get; set; }
     public int Height { get; set; }
     public string? TargetProcessName { get; set; }
+
+    /// <summary>One-line description for lists; not persisted.</summary>
+    [JsonIgnore]
+    public string Summary
+    {
+        get
+        {
+            var s = $"{Width} × {Height} @ {X},{Y}";
+            return string.IsNullOrWhiteSpace(TargetProcessName) ? s : $"{s} • {TargetProcessName}";
+        }
+    }
 }
 
 public enum HotkeyAction

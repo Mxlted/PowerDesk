@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="PowerDesk.Tests/PowerDesk.Tests.csproj" />
+  <Project Path="PowerDesk/PowerDesk.csproj" />
+</Solution>
