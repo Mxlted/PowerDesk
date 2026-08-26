@@ -262,4 +262,155 @@ internal static class MonitorLayoutLogic
 
     private static string Label(MonitorLayoutDisplay d)
         => d.DisplayNumber > 0 ? $"Monitor {d.DisplayNumber}" : d.DeviceName;
+
+    // ---------------------------------------------------------------- import / export
+
+    /// <summary>Marker written into exported files so unrelated JSON is rejected with a clear message.</summary>
+    public const string ExportKind = "PowerDesk.MonitorLayout";
+    public const int ExportVersion = 1;
+    public const long MaxImportBytes = 256 * 1024;
+
+    private static readonly System.Text.Json.JsonSerializerOptions JsonOptions = new()
+    {
+        WriteIndented = true,
+        PropertyNameCaseInsensitive = true,
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
+    };
+
+    /// <summary>Envelope for exported layouts. Public so System.Text.Json can materialise it.</summary>
+    public sealed class LayoutExportFile
+    {
+        public string Kind { get; set; } = ExportKind;
+        public int Version { get; set; } = ExportVersion;
+        public List<MonitorLayoutPreset>? Layouts { get; set; }
+    }
+
+    public static string SerializeLayouts(IEnumerable<MonitorLayoutPreset> presets)
+    {
+        var file = new LayoutExportFile
+        {
+            Layouts = presets.Select(p => new MonitorLayoutPreset
+            {
+                Id = p.Id,
+                Name = p.Name,
+                CreatedAt = p.CreatedAt,
+                Displays = p.Displays.Select(d => new MonitorLayoutDisplay
+                {
+                    DisplayNumber = d.DisplayNumber,
+                    DeviceName = d.DeviceName,
+                    IsPrimary = d.IsPrimary,
+                    X = d.X,
+                    Y = d.Y,
+                    Width = d.Width,
+                    Height = d.Height,
+                }).ToList(),
+            }).ToList(),
+        };
+        return System.Text.Json.JsonSerializer.Serialize(file, JsonOptions);
+    }
+
+    /// <summary>
+    /// Parses an exported layout file (the envelope, a bare preset object, or a bare array of presets).
+    /// Every returned preset has a fresh Id, normalised display numbers, a non-empty name and at least
+    /// one display with a positive size. Returns false with a human-readable error otherwise.
+    /// </summary>
+    public static bool TryParseLayoutFile(string? json, out List<MonitorLayoutPreset> layouts, out string error)
+    {
+        layouts = new List<MonitorLayoutPreset>();
+        error = string.Empty;
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            error = "The file is empty.";
+            return false;
+        }
+
+        List<MonitorLayoutPreset?>? raw = null;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            if (root.ValueKind == System.Text.Json.JsonValueKind.Array)
+            {
+                raw = System.Text.Json.JsonSerializer.Deserialize<List<MonitorLayoutPreset?>>(json, JsonOptions);
+            }
+            else if (root.ValueKind == System.Text.Json.JsonValueKind.Object)
+            {
+                if (TryGetPropertyIgnoreCase(root, "Layouts", out _))
+                {
+                    var envelope = System.Text.Json.JsonSerializer.Deserialize<LayoutExportFile>(json, JsonOptions);
+                    if (envelope is not null && !string.IsNullOrEmpty(envelope.Kind)
+                        && !string.Equals(envelope.Kind, ExportKind, StringComparison.OrdinalIgnoreCase))
+                    {
+                        error = "This JSON file is not a PowerDesk monitor layout.";
+                        return false;
+                    }
+                    raw = envelope?.Layouts?.Cast<MonitorLayoutPreset?>().ToList();
+                }
+                else if (TryGetPropertyIgnoreCase(root, "Displays", out _))
+                {
+                    raw = [System.Text.Json.JsonSerializer.Deserialize<MonitorLayoutPreset>(json, JsonOptions)];
+                }
+            }
+        }
+        catch (System.Text.Json.JsonException ex)
+        {
+            error = $"The file is not valid JSON: {ex.Message}";
+            return false;
+        }
+
+        if (raw is null)
+        {
+            error = "This JSON file is not a PowerDesk monitor layout.";
+            return false;
+        }
+
+        foreach (var preset in raw)
+        {
+            if (preset is null) continue;
+            preset.Displays ??= new List<MonitorLayoutDisplay>();
+            preset.Displays.RemoveAll(d => d is null);
+            if (preset.Displays.Count == 0) continue;
+            if (preset.Displays.Any(d => d.Width <= 0 || d.Height <= 0)) continue;
+            foreach (var d in preset.Displays) d.DeviceName ??= string.Empty;
+            preset.Id = Guid.NewGuid().ToString("N");
+            if (string.IsNullOrWhiteSpace(preset.Name)) preset.Name = "Imported layout";
+            preset.Name = preset.Name.Trim();
+            if (preset.Name.Length > MaxLayoutNameLength) preset.Name = preset.Name[..MaxLayoutNameLength].TrimEnd();
+            if (preset.CreatedAt == default) preset.CreatedAt = DateTime.Now;
+            NormalizeDisplayNumbers(preset);
+            layouts.Add(preset);
+        }
+
+        if (layouts.Count == 0)
+        {
+            error = "The file contains no usable layouts (each needs at least one display with a positive size).";
+            return false;
+        }
+        return true;
+    }
+
+    private static bool TryGetPropertyIgnoreCase(System.Text.Json.JsonElement element, string name, out System.Text.Json.JsonElement value)
+    {
+        foreach (var property in element.EnumerateObject())
+        {
+            if (string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase))
+            {
+                value = property.Value;
+                return true;
+            }
+        }
+        value = default;
+        return false;
+    }
+
+    /// <summary>File name proposed when exporting a layout.</summary>
+    public static string ExportFileName(string? layoutName)
+    {
+        var name = (layoutName ?? string.Empty).Trim();
+        if (name.Length == 0) name = "monitor-layout";
+        var invalid = System.IO.Path.GetInvalidFileNameChars();
+        var safe = new string(name.Select(c => invalid.Contains(c) ? '-' : c).ToArray()).Trim('-', ' ', '.');
+        if (safe.Length == 0) safe = "monitor-layout";
+        return safe + ".monitorlayout.json";
+    }
 }

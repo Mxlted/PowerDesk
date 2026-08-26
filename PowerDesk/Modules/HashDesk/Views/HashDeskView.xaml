@@ -3,7 +3,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              Background="{DynamicResource SurfaceBaseBrush}"
              Foreground="{DynamicResource TextPrimaryBrush}">
-    <Grid Margin="32,24" AllowDrop="True" Drop="Root_Drop" DragOver="Root_DragOver" Background="Transparent">
+    <Grid Margin="32,24" AllowDrop="True" PreviewDragOver="Root_PreviewDragOver" PreviewDrop="Root_PreviewDrop" Background="Transparent">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
@@ -14,7 +14,7 @@
             <StackPanel DockPanel.Dock="Left">
                 <TextBlock Style="{StaticResource TextDisplay}" Text="HashDesk"/>
                 <TextBlock Style="{StaticResource TextCaption}" Margin="0,4,0,0"
-                           Text="Compute file and text checksums locally. Drop files anywhere on this page."/>
+                           Text="Compute file and text checksums locally. Drop files, folders, or a .sha256/.md5 checksum file anywhere on this page."/>
             </StackPanel>
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
                 <Button Content="Cancel" Command="{Binding CancelCommand}" Margin="0,0,8,0"
@@ -64,7 +64,7 @@
                             </Border>
                         </StackPanel>
                         <TextBox Text="{Binding ExpectedHash, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas"
-                                 ToolTip="Paste a SHA256, SHA1, or MD5 digest. Case, spaces, dashes and a 0x prefix are ignored. Compared against the selected file and the text hashes."/>
+                                 ToolTip="Paste a SHA256, SHA1, or MD5 digest, or drop a .sha256/.sha1/.md5 checksum file on the page. Case, spaces, dashes and a 0x prefix are ignored. Compared against the selected file and the text hashes."/>
                     </DockPanel>
                 </Grid>
             </Border>
@@ -119,7 +119,7 @@
                                         Visibility="{Binding ShowEmptyState, Converter={StaticResource BoolToVis}}">
                                 <TextBlock Text="No files hashed yet" Style="{StaticResource TextSubtitle}"
                                            Foreground="{DynamicResource TextSecondaryBrush}" TextAlignment="Center"/>
-                                <TextBlock Text="Drop files here or use Add files. Each file is read once for SHA256, SHA1 and MD5."
+                                <TextBlock Text="Drop files or folders here, or use Add files. Each file is read once for SHA256, SHA1 and MD5. Dropping a .sha256, .sha1 or .md5 file fills in the expected hash."
                                            Style="{StaticResource TextCaption}" Margin="0,8,0,0" TextAlignment="Center" TextWrapping="Wrap"/>
                             </StackPanel>
                         </Grid>

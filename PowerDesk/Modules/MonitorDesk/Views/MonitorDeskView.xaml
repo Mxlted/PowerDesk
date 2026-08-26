@@ -3,7 +3,10 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              Background="{DynamicResource SurfaceBaseBrush}"
              Foreground="{DynamicResource TextPrimaryBrush}">
-    <Grid Margin="32,24">
+    <UserControl.InputBindings>
+        <KeyBinding Key="F5" Command="{Binding RefreshCommand}"/>
+    </UserControl.InputBindings>
+    <Grid Margin="32,24" AllowDrop="True" PreviewDragOver="Root_PreviewDragOver" PreviewDrop="Root_PreviewDrop" Background="Transparent">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
@@ -16,7 +19,7 @@
             <StackPanel DockPanel.Dock="Left">
                 <TextBlock Style="{StaticResource TextDisplay}" Text="MonitorDesk"/>
                 <TextBlock Style="{StaticResource TextCaption}" Margin="0,4,0,0"
-                           Text="Display bounds, work areas, and saved monitor layouts."/>
+                           Text="Display bounds, work areas, and saved monitor layouts. Drop an exported layout file anywhere on this page to import it."/>
             </StackPanel>
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
                 <Button Content="Display settings" Command="{Binding OpenDisplaySettingsCommand}"
@@ -24,7 +27,7 @@
                 <Button Content="Copy summary" Margin="8,0,0,0" Command="{Binding CopySummaryCommand}"
                         ToolTip="Copy one line per display (device, role, bounds, work area) to the clipboard"/>
                 <Button Content="Refresh" Margin="8,0,0,0" Style="{StaticResource PrimaryButton}" Command="{Binding RefreshCommand}"
-                        ToolTip="Re-read the connected displays"/>
+                        ToolTip="Re-read the connected displays (F5)"/>
             </StackPanel>
         </DockPanel>
 
@@ -73,6 +76,8 @@
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
 
                 <TextBlock Grid.Row="0" Grid.Column="0" Text="New layout name" Style="{StaticResource TextCaption}"/>
@@ -106,8 +111,14 @@
                 <Button Grid.Row="1" Grid.Column="5" Content="Remove" Margin="8,6,0,0"
                         Command="{Binding RemoveLayoutCommand}"
                         ToolTip="Delete the selected layout"/>
+                <Button Grid.Row="1" Grid.Column="6" Content="Import…" Margin="8,6,0,0"
+                        Command="{Binding ImportLayoutCommand}"
+                        ToolTip="Load layouts from an exported .json file (or drop the file onto this page)"/>
+                <Button Grid.Row="1" Grid.Column="7" Content="Export…" Margin="8,6,0,0"
+                        Command="{Binding ExportLayoutCommand}"
+                        ToolTip="Save the selected layout as a .json file to back it up or move it to another PC"/>
 
-                <StackPanel Grid.Row="2" Grid.Column="3" Grid.ColumnSpan="3" Orientation="Horizontal" Margin="0,8,0,0"
+                <StackPanel Grid.Row="2" Grid.Column="3" Grid.ColumnSpan="5" Orientation="Horizontal" Margin="0,8,0,0"
                             Visibility="{Binding SelectedLayout, Converter={StaticResource NullToVis}}">
                     <Border Style="{StaticResource Pill}" Background="{DynamicResource AccentSoftBrush}" Margin="0,0,8,0"
                             Visibility="{Binding IsSelectedLayoutActive, Converter={StaticResource BoolToVis}}">

@@ -2,19 +2,19 @@
 
 A modular, local-first PC tool hub for Windows - inspired by Microsoft PowerToys, designed to grow one tool at a time.
 
-Current beta release: **v0.4.0**.
+Current beta release: **v0.5.0**.
 
 PowerDesk currently includes these built-in tools:
 
 - **[WindowSizer](https://github.com/Mxlted/WindowSizer)** - resize, snap, pin, center, and reposition windows with pixel precision. Saved size presets, layout presets, multi-monitor support, and global hotkeys.
-- **[StartupPilot](https://github.com/Mxlted/StartupPilot)** - see and control everything Windows runs at sign-in: registry `Run` keys, Startup folders, scheduled tasks, and services. Startup entries show Task Manager-style enabled/disabled state, while services live in their own section with Automatic, Manual, and Disabled startup type controls. Per-source filters, impact estimates, orphan detection, change history with undo, and CSV export are included.
-- **MonitorDesk** - inspect monitor bounds, work areas, primary display state, virtual desktop layout, and saved monitor layouts with editable display positions.
+- **[StartupPilot](https://github.com/Mxlted/StartupPilot)** - see and control everything Windows runs at sign-in: registry `Run` keys, Startup folders, scheduled tasks, and services. Startup entries show Task Manager-style enabled/disabled state, while services live in their own section with Automatic, Manual, and Disabled startup type controls. Per-source filters, impact estimates, orphan detection, change history with undo, and CSV export are included. Drop a program or shortcut onto the page (or use *Add to startup…*) to add it to your Startup folder.
+- **MonitorDesk** - inspect monitor bounds, work areas, primary display state, virtual desktop layout, and saved monitor layouts with editable display positions. Layouts can be exported to and imported from `.json` files (drop one onto the page).
 - **DnsDesk** - inspect adapter DNS state, switch common DNS profiles, apply IPv4 and IPv6 resolvers when the selected adapter supports them, and flush the DNS resolver cache.
-- **HashDesk** - compute SHA256, SHA1, and MD5 checksums for files or text without sending anything anywhere.
-- **HostProfiles** - save and apply Windows hosts-file profiles with timestamped backups.
+- **HashDesk** - compute SHA256, SHA1, and MD5 checksums for files or text without sending anything anywhere. Drop files or folders to hash them; drop a `.sha256`/`.sha1`/`.md5` checksum file to load the expected digest (and hash the file it names).
+- **HostProfiles** - save and apply Windows hosts-file profiles with timestamped backups. Import a hosts file by dropping it onto the page, export profiles as text, and open the backups folder in one click.
 - **ColorPicker** - pick colors from a dialog or themed screen picker, sample pixels, and copy HEX/RGB/HSL values.
 - **FileLockFinder** - find processes locking a file or folder using Windows Restart Manager, drag in targets, then inspect or stop lock owners with confirmation.
-- **PathEditor** - edit User or Machine PATH entries with duplicate detection, asynchronous missing-folder validation, backups, and environment-change broadcast.
+- **PathEditor** - edit User or Machine PATH entries with duplicate detection, asynchronous missing-folder validation, backups, and environment-change broadcast. Drop folders (or a program inside one) onto the page to append them.
 
 PowerDesk runs entirely on your machine. No account, no sign-in, no telemetry, no network calls.
 
@@ -60,7 +60,8 @@ PowerDesk starts unelevated. If you change something that needs administrator ri
 - Dashboard with module status, recent activity, and health indicators
 - Single-instance guard to avoid settings conflicts
 - Global hotkeys for window snapping (defaults: `Ctrl+Alt+Arrow`, `Ctrl+Alt+C`, `Ctrl+Alt+M`)
-- Shell shortcuts: `Ctrl+F` search tools, `Ctrl+1` dashboard, `Ctrl+,` settings; `F5` refreshes in most tools
+- Shell shortcuts: `Ctrl+F` search tools, `Ctrl+1` dashboard, `Ctrl+,` settings; `F5` refreshes/rescans in every tool that has something to refresh
+- Drag and drop from Explorer anywhere on a tool page: files/folders/checksum files (HashDesk), a file or folder to scan (FileLockFinder), folders to add (PathEditor), hosts files to import (HostProfiles), programs to add to startup (StartupPilot), and layout files to import (MonitorDesk)
 - Window size and position are remembered between runs (and kept on-screen if a monitor goes away)
 - Launching PowerDesk while it is already running brings the existing window forward
 - Saved monitor layouts and editable display positions

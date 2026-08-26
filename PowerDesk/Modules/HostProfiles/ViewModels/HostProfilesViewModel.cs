@@ -13,6 +13,8 @@ using PowerDesk.Core.Storage;
 using PowerDesk.Modules.HostProfiles.Models;
 using PowerDesk.Modules.HostProfiles.Services;
 using Clipboard = System.Windows.Clipboard;
+using OpenFileDialog = Microsoft.Win32.OpenFileDialog;
+using SaveFileDialog = Microsoft.Win32.SaveFileDialog;
 
 namespace PowerDesk.Modules.HostProfiles.ViewModels;
 
@@ -34,6 +36,7 @@ public sealed partial class HostProfilesViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(DeleteSelectedProfileCommand))]
     [NotifyCanExecuteChangedFor(nameof(SaveSelectedProfileCommand))]
     [NotifyCanExecuteChangedFor(nameof(ApplySelectedProfileCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ExportSelectedProfileCommand))]
     private HostProfile? _selectedProfile;
 
     [ObservableProperty] private string _currentHosts = string.Empty;
@@ -51,6 +54,7 @@ public sealed partial class HostProfilesViewModel : ObservableObject
     public int ProfileCount => Profiles.Count;
     public bool HasProfiles => Profiles.Count > 0;
     public string HostsPath => _hostsFile.HostsPath;
+    public string BackupsFolder => PathService.ModuleDir("HostProfiles");
 
     public HostProfilesViewModel(
         ILogger log,
@@ -166,6 +170,153 @@ public sealed partial class HostProfilesViewModel : ObservableObject
         SelectedProfile = profile;
         NewProfileName = string.Empty;
         NotifyProfilesChanged();
+    }
+
+    [RelayCommand]
+    private async Task ImportProfileAsync()
+    {
+        string[] files;
+        try
+        {
+            var dlg = new OpenFileDialog
+            {
+                Title = "Import hosts file(s) as profiles",
+                Filter = "Hosts files|hosts;*.hosts;*.txt|All files|*.*",
+                Multiselect = true,
+                CheckFileExists = true,
+            };
+            if (dlg.ShowDialog() != true) return;
+            files = dlg.FileNames;
+        }
+        catch (Exception ex)
+        {
+            _log.Error("Import hosts profile (picker)", ex);
+            _status.Set("Could not open the file picker.", StatusKind.Warning);
+            return;
+        }
+        await ImportProfilesFromPathsAsync(files);
+    }
+
+    /// <summary>
+    /// Creates one profile per dropped/picked hosts-style text file. The profile is named after the
+    /// file (made unique) and the typed "new profile name" is used for a single import when set.
+    /// Nothing touches the Windows hosts file. Never throws.
+    /// </summary>
+    public async Task ImportProfilesFromPathsAsync(IEnumerable<string>? paths)
+    {
+        var candidates = (paths ?? [])
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .Select(p => p.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (candidates.Count == 0) return;
+
+        var imported = new List<string>();
+        var skipped = new List<string>();
+        var typedName = candidates.Count == 1 ? NewProfileName : string.Empty;
+
+        foreach (var path in candidates)
+        {
+            try
+            {
+                if (Directory.Exists(path)) { skipped.Add($"{Path.GetFileName(path)} is a folder"); continue; }
+                if (!File.Exists(path)) { skipped.Add($"{Path.GetFileName(path)} does not exist"); continue; }
+                var info = new FileInfo(path);
+                if (info.Length > HostProfilesLogic.MaxImportBytes)
+                {
+                    skipped.Add($"{info.Name} is too large to be a hosts file");
+                    continue;
+                }
+
+                var content = HostProfilesLogic.Decode(File.ReadAllBytes(path));
+                string name;
+                if (!string.IsNullOrWhiteSpace(typedName))
+                {
+                    var error = HostProfilesLogic.ValidateProfileName(typedName, Profiles.Select(p => p.Name));
+                    if (error is not null) { _status.Set(error, StatusKind.Warning); return; }
+                    name = typedName.Trim();
+                }
+                else
+                {
+                    name = HostProfilesLogic.MakeUniqueName(HostProfilesLogic.ProfileNameFromPath(path), Profiles.Select(p => p.Name));
+                }
+
+                AddProfile(new HostProfile { Name = name, Content = content, UpdatedAt = DateTime.Now });
+                imported.Add(name);
+            }
+            catch (Exception ex)
+            {
+                _log.Error($"Import hosts profile: {path}", ex);
+                skipped.Add($"{Path.GetFileName(path)} could not be read");
+            }
+        }
+
+        if (imported.Count > 0)
+        {
+            await SaveAsync();
+            _recent.Add("HostProfiles", imported.Count == 1
+                ? $"Imported hosts profile: {imported[0]}"
+                : $"Imported {imported.Count} hosts profiles.");
+        }
+
+        var summary = imported.Count switch
+        {
+            0 => "Nothing was imported.",
+            1 => $"Imported '{imported[0]}'. Review it and press Apply when ready.",
+            _ => $"Imported {imported.Count} profiles.",
+        };
+        if (skipped.Count > 0) summary += $" Skipped: {string.Join("; ", skipped)}.";
+        _status.Set(summary, imported.Count == 0 ? StatusKind.Warning : skipped.Count > 0 ? StatusKind.Warning : StatusKind.Success);
+    }
+
+    [RelayCommand(CanExecute = nameof(HasSelection))]
+    private void ExportSelectedProfile()
+    {
+        var profile = SelectedProfile;
+        if (profile is null)
+        {
+            _status.Set("Select a hosts profile first.", StatusKind.Warning);
+            return;
+        }
+        try
+        {
+            var dlg = new SaveFileDialog
+            {
+                Title = "Export hosts profile",
+                FileName = HostProfilesLogic.ExportFileName(profile.Name),
+                Filter = "Text files (*.txt)|*.txt|All files|*.*",
+                AddExtension = true,
+            };
+            if (dlg.ShowDialog() != true) return;
+            File.WriteAllText(dlg.FileName, HostProfilesLogic.NormalizeForWrite(profile.Content), HostProfilesLogic.WriteEncoding);
+            _recent.Add("HostProfiles", $"Exported hosts profile: {profile.Name}");
+            _status.Set($"Exported '{profile.Name}' to {Path.GetFileName(dlg.FileName)}.", StatusKind.Success);
+        }
+        catch (Exception ex)
+        {
+            _log.Error("Export hosts profile", ex);
+            _status.Set($"Could not export the profile: {ex.Message}", StatusKind.Error);
+        }
+    }
+
+    [RelayCommand]
+    private void OpenBackupsFolder()
+    {
+        try
+        {
+            var folder = BackupsFolder;
+            Directory.CreateDirectory(folder);
+            using var _ = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = folder,
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            _log.Error("Open hosts backups folder", ex);
+            _status.Set("Could not open the backups folder.", StatusKind.Warning);
+        }
     }
 
     private bool HasSelection => SelectedProfile is not null;

@@ -92,27 +92,44 @@ public sealed partial class HashDeskViewModel : ObservableObject
 
     /// <summary>
     /// Hashes each file once (SHA256/SHA1/MD5 in a single pass). Safe to call from the drop handler;
-    /// never throws. A second call while busy is refused so the busy state cannot get out of sync.
+    /// never throws. Folders contribute their top-level files; checksum sidecars (.sha256, .md5, ...)
+    /// are loaded into the expected-hash box instead of being hashed. A second call while busy is
+    /// refused so the busy state cannot get out of sync.
     /// </summary>
     public async Task AddFilesAsync(IEnumerable<string>? paths)
     {
-        List<string> files;
+        HashDeskLogic.DropExpansion expansion;
         try
         {
-            files = (paths ?? [])
-                .Where(p => !string.IsNullOrWhiteSpace(p) && File.Exists(p))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
+            expansion = HashDeskLogic.ExpandDropPaths(
+                paths, File.Exists, Directory.Exists,
+                dir => Directory.EnumerateFiles(dir, "*", SearchOption.TopDirectoryOnly));
         }
         catch (Exception ex)
         {
             _log.Error("Hash files (enumerate)", ex);
-            files = [];
+            expansion = new HashDeskLogic.DropExpansion([], [], 0, false, 0);
         }
 
+        var notes = new List<string>();
+        if (expansion.ChecksumFiles.Count > 0)
+            notes.Add(LoadChecksumFile(expansion.ChecksumFiles[0], expansion.Files));
+        if (expansion.Truncated)
+            notes.Add($"Only the first {HashDeskLogic.MaxFolderFiles} files of a folder are taken.");
+        if (expansion.FoldersExpanded > 0)
+            notes.Add("Subfolders are not included.");
+        if (expansion.Ignored > 0)
+            notes.Add($"{expansion.Ignored} dropped item(s) do not exist on disk.");
+
+        var files = expansion.Files;
         if (files.Count == 0)
         {
-            _status.Set("No files were selected. Folders are not hashed; drop individual files.", StatusKind.Warning);
+            var reason = expansion.ChecksumFiles.Count > 0
+                ? string.Join(" ", notes)
+                : expansion.FoldersExpanded > 0
+                    ? "The dropped folder(s) contain no files. " + string.Join(" ", notes)
+                    : "No files were selected.";
+            _status.Set(reason.Trim(), expansion.ChecksumFiles.Count > 0 ? StatusKind.Info : StatusKind.Warning);
             return;
         }
         if (IsBusy)
@@ -120,6 +137,8 @@ public sealed partial class HashDeskViewModel : ObservableObject
             _status.Set("Hashing is already in progress. Wait for it to finish or cancel it first.", StatusKind.Warning);
             return;
         }
+        if (notes.Count > 0)
+            _status.Set(string.Join(" ", notes), StatusKind.Info);
 
         using var cts = new CancellationTokenSource();
         _cts = cts;
@@ -197,6 +216,39 @@ public sealed partial class HashDeskViewModel : ObservableObject
             IsBusy = false;
             Progress = 0;
             CurrentFileLabel = string.Empty;
+        }
+    }
+
+    /// <summary>
+    /// Loads the first digest from a checksum sidecar into <see cref="ExpectedHash"/>. When the sidecar
+    /// names a file that sits next to it and that file is not already queued, it is queued too, so
+    /// dropping "setup.exe.sha256" alone verifies setup.exe in one go. Returns a status note.
+    /// </summary>
+    private string LoadChecksumFile(string checksumPath, List<string> queue)
+    {
+        try
+        {
+            var info = new FileInfo(checksumPath);
+            if (info.Length > 64 * 1024) return $"{info.Name} is too large to be a checksum file; ignored.";
+            var entry = HashDeskLogic.ParseChecksumFile(File.ReadAllText(checksumPath));
+            if (entry is null) return $"No SHA256/SHA1/MD5 digest found in {info.Name}.";
+
+            ExpectedHash = entry.Digest;
+            var note = $"Expected hash loaded from {info.Name}.";
+            if (entry.FileName is null) return note;
+
+            var sibling = Path.Combine(info.DirectoryName ?? string.Empty, Path.GetFileName(entry.FileName));
+            if (File.Exists(sibling) && !queue.Contains(sibling, StringComparer.OrdinalIgnoreCase))
+            {
+                queue.Insert(0, sibling);
+                note += $" Also hashing {Path.GetFileName(sibling)} named in it.";
+            }
+            return note;
+        }
+        catch (Exception ex)
+        {
+            _log.Error($"Read checksum file: {checksumPath}", ex);
+            return $"Could not read {Path.GetFileName(checksumPath)}.";
         }
     }
 

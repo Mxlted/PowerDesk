@@ -1,6 +1,5 @@
 using PowerDesk.Modules.FileLockFinder.ViewModels;
-using DataFormats = System.Windows.DataFormats;
-using DragDropEffects = System.Windows.DragDropEffects;
+using PowerDesk.Shared.DragDrop;
 using DragEventArgs = System.Windows.DragEventArgs;
 using UserControl = System.Windows.Controls.UserControl;
 
@@ -17,24 +16,8 @@ public partial class FileLockFinderView : UserControl
         DataContext = vm;
     }
 
-    private void Root_DragOver(object sender, DragEventArgs e)
-    {
-        e.Effects = e.Data.GetDataPresent(DataFormats.FileDrop) ? DragDropEffects.Copy : DragDropEffects.None;
-        e.Handled = true;
-    }
+    private void Root_PreviewDragOver(object sender, DragEventArgs e) => FileDrop.OnDragOver(e);
 
-    private void Root_Drop(object sender, DragEventArgs e)
-    {
-        try
-        {
-            if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return;
-            if (e.Data.GetData(DataFormats.FileDrop) is not string[] paths) return;
-            e.Handled = true;
-            _vm.SetTargetPathsFromDrop(paths);
-        }
-        catch
-        {
-            // Drag sources can hand over broken data objects; never let a drop crash the shell.
-        }
-    }
+    private void Root_PreviewDrop(object sender, DragEventArgs e)
+        => FileDrop.OnDrop(e, _vm.SetTargetPathsFromDrop);
 }

@@ -3,7 +3,10 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              Background="{DynamicResource SurfaceBaseBrush}"
              Foreground="{DynamicResource TextPrimaryBrush}">
-    <Grid Margin="32,24">
+    <UserControl.InputBindings>
+        <KeyBinding Key="F5" Command="{Binding LoadCurrentHostsCommand}"/>
+    </UserControl.InputBindings>
+    <Grid Margin="32,24" AllowDrop="True" PreviewDragOver="Root_PreviewDragOver" PreviewDrop="Root_PreviewDrop" Background="Transparent">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
@@ -14,7 +17,7 @@
             <StackPanel DockPanel.Dock="Left">
                 <TextBlock Style="{StaticResource TextDisplay}" Text="HostProfiles"/>
                 <TextBlock Style="{StaticResource TextCaption}" Margin="0,4,0,0"
-                           Text="Save, edit, and apply local Windows hosts file profiles. A timestamped backup is taken before every apply."/>
+                           Text="Save, edit, and apply local Windows hosts file profiles. A timestamped backup is taken before every apply. Drop a hosts file anywhere on this page to import it as a profile."/>
             </StackPanel>
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
                 <Border Style="{StaticResource Pill}" Margin="0,0,12,0"
@@ -23,12 +26,14 @@
                     <TextBlock Text="Administrator required to apply" Foreground="{DynamicResource WarningBrush}" FontSize="11"/>
                 </Border>
                 <Button Content="Copy path" Command="{Binding CopyHostsPathCommand}" ToolTip="Copy the hosts file path to the clipboard"/>
+                <Button Content="Backups" Margin="8,0,0,0" Command="{Binding OpenBackupsFolderCommand}"
+                        ToolTip="Open the folder holding the hosts file backups that are taken before each apply"/>
                 <Button Content="Relaunch as administrator" Margin="8,0,0,0"
                         Command="{Binding RelaunchAsAdminCommand}"
                         ToolTip="Restart PowerDesk elevated so profiles can be applied"
                         Visibility="{Binding IsAdmin, Converter={StaticResource InverseBoolToVis}}"/>
                 <Button Content="Reload hosts" Margin="8,0,0,0" Style="{StaticResource PrimaryButton}" Command="{Binding LoadCurrentHostsCommand}"
-                        ToolTip="Re-read the Windows hosts file"/>
+                        ToolTip="Re-read the Windows hosts file (F5)"/>
             </StackPanel>
         </DockPanel>
 
@@ -78,16 +83,22 @@
                     <StackPanel DockPanel.Dock="Top">
                         <TextBlock Text="Profiles" Style="{StaticResource TextSubtitle}"/>
                         <TextBox Text="{Binding NewProfileName, UpdateSourceTrigger=PropertyChanged}" Margin="0,10,0,0"
-                                 ToolTip="Optional name for a new profile (must be unique). Enter saves the current hosts file as a profile.">
+                                 ToolTip="Optional name for a new profile (must be unique). Enter saves the current hosts file as a profile; the name is also used for a single imported file.">
                             <TextBox.InputBindings>
                                 <KeyBinding Key="Return" Command="{Binding SaveCurrentAsProfileCommand}"/>
                             </TextBox.InputBindings>
                         </TextBox>
-                        <UniformGrid Columns="2" Margin="0,8,0,12">
+                        <UniformGrid Columns="2" Margin="0,8,0,0">
                             <Button Content="Blank" Margin="0,0,4,0" Command="{Binding AddBlankProfileCommand}"
                                     ToolTip="Create a minimal profile with localhost entries"/>
                             <Button Content="From current" Margin="4,0,0,0" Command="{Binding SaveCurrentAsProfileCommand}"
                                     ToolTip="Snapshot the current Windows hosts file into a new profile"/>
+                        </UniformGrid>
+                        <UniformGrid Columns="2" Margin="0,8,0,12">
+                            <Button Content="Import…" Margin="0,0,4,0" Command="{Binding ImportProfileCommand}"
+                                    ToolTip="Load one or more hosts-style text files as new profiles (or drop them onto this page)"/>
+                            <Button Content="Export…" Margin="4,0,0,0" Command="{Binding ExportSelectedProfileCommand}"
+                                    ToolTip="Save the selected profile as a text file"/>
                         </UniformGrid>
                     </StackPanel>
                     <StackPanel DockPanel.Dock="Bottom" Margin="0,12,0,0">
@@ -109,7 +120,7 @@
                         <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Margin="12"
                                     Visibility="{Binding HasProfiles, Converter={StaticResource InverseBoolToVis}}">
                             <TextBlock Text="No profiles yet" Style="{StaticResource TextSubtitle}" Foreground="{DynamicResource TextSecondaryBrush}" TextAlignment="Center"/>
-                            <TextBlock Text="Use From current to snapshot your hosts file, or Blank to start fresh."
+                            <TextBlock Text="Use From current to snapshot your hosts file, Blank to start fresh, or drop a hosts file here to import it."
                                        Style="{StaticResource TextCaption}" Margin="0,6,0,0" TextAlignment="Center" TextWrapping="Wrap"/>
                         </StackPanel>
                     </Grid>

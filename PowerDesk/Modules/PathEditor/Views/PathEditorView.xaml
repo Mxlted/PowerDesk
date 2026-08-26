@@ -30,7 +30,7 @@
         </Style>
     </UserControl.Resources>
 
-    <Grid Margin="32,24">
+    <Grid Margin="32,24" AllowDrop="True" PreviewDragOver="Root_PreviewDragOver" PreviewDrop="Root_PreviewDrop" Background="Transparent">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
@@ -42,7 +42,7 @@
             <StackPanel DockPanel.Dock="Left">
                 <TextBlock Style="{StaticResource TextDisplay}" Text="PathEditor"/>
                 <TextBlock Style="{StaticResource TextCaption}" Margin="0,4,0,0"
-                           Text="Review and edit User or Machine PATH entries with validation and backups."/>
+                           Text="Review and edit User or Machine PATH entries with validation and backups. Drop a folder (or a program inside it) anywhere on this page to add it."/>
                 <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
                     <Border Style="{StaticResource Pill}"
                             Visibility="{Binding ShowAdminHint, Converter={StaticResource BoolToVis}}">
@@ -144,7 +144,7 @@
                         <TextBlock Text="This PATH has no entries" Style="{StaticResource TextSubtitle}"
                                    Foreground="{DynamicResource TextSecondaryBrush}" HorizontalAlignment="Center"/>
                         <TextBlock Style="{StaticResource TextCaption}" HorizontalAlignment="Center" Margin="0,6,0,0" TextWrapping="Wrap"
-                                   Text="Add a folder on the right, or restore a backup from the Backups tab."/>
+                                   Text="Add a folder on the right, drop one here from Explorer, or restore a backup from the Backups tab."/>
                     </StackPanel>
                 </Grid>
             </Border>
@@ -172,6 +172,8 @@
                                 </Grid>
                                 <Button Content="Add" Margin="0,8,0,0" Command="{Binding AddEntryCommand}"
                                         ToolTip="Append the folder to the end of the PATH (Enter)"/>
+                                <TextBlock Style="{StaticResource TextCaption}" Margin="0,8,0,0" TextWrapping="Wrap"
+                                           Text="Tip: drag folders from Explorer onto this page to append them. Dropping a file adds the folder that contains it."/>
 
                                 <Border Background="{DynamicResource DividerBrush}" Height="1" Margin="0,18"/>
                                 <TextBlock Text="Selected entry" Style="{StaticResource TextSubtitle}"/>

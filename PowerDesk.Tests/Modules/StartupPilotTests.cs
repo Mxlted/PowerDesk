@@ -358,4 +358,50 @@ public sealed class StartupPilotTests
         Assert.Equal("Registry|CurrentUser|Software\\X|Name", StartupPilotLogic.NoteKey(StartupSource.Registry, "CurrentUser|Software\\X|Name"));
         Assert.NotEqual(StartupPilotLogic.NoteKey(StartupSource.Registry, "a"), StartupPilotLogic.NoteKey(StartupSource.Service, "a"));
     }
+
+    // ------------------------------------------------------------------ adding startup-folder entries
+
+    [Theory]
+    [InlineData(@"C:\Apps\Tool.lnk", true)]
+    [InlineData(@"C:\Apps\Site.URL", true)]
+    [InlineData(@"C:\Apps\Tool.exe", false)]
+    [InlineData(@"C:\Apps\run.bat", false)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    public void IsShortcutLike_ByExtension(string? path, bool expected)
+        => Assert.Equal(expected, StartupPilotLogic.IsShortcutLike(path));
+
+    [Theory]
+    [InlineData(@"C:\Program Files\Vendor\App.exe", "App.lnk")]
+    [InlineData(@"C:\Apps\Tool.lnk", "Tool.lnk")]
+    [InlineData(@"C:\Apps\Site.url", "Site.url")]
+    [InlineData(@"C:\Apps\run.bat", "run.lnk")]
+    [InlineData(@"C:\Apps\my<tool>?.exe", "my-tool.lnk")]
+    [InlineData(@"C:\Apps\a|b.exe", "a-b.lnk")]
+    [InlineData(@"C:\Apps\.exe", "Startup item.lnk")]
+    [InlineData("", "Startup item.lnk")]
+    public void StartupEntryFileName_UsesTargetNameAndSafeCharacters(string target, string expected)
+    {
+        var name = StartupPilotLogic.StartupEntryFileName(target);
+        Assert.Equal(expected, name);
+        Assert.DoesNotContain(name, c => Path.GetInvalidFileNameChars().Contains(c));
+    }
+
+    [Fact]
+    public void PickStartupDropTargets_FilesOnlyDedupedFoldersAndMissingCounted()
+    {
+        var files = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { @"C:\a\app.exe", @"C:\a\tool.lnk" };
+        var dirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { @"C:\a" };
+
+        var (picked, folders, missing) = StartupPilotLogic.PickStartupDropTargets(
+            new[] { @"C:\a\app.exe", @"C:\A\APP.EXE", @"C:\a", @"C:\a\tool.lnk", @"C:\gone.exe", " " },
+            files.Contains, dirs.Contains);
+
+        Assert.Equal(new[] { @"C:\a\app.exe", @"C:\a\tool.lnk" }, picked);
+        Assert.Equal(1, folders);
+        Assert.Equal(1, missing);
+
+        var (none, _, _) = StartupPilotLogic.PickStartupDropTargets(null, _ => true, _ => false);
+        Assert.Empty(none);
+    }
 }

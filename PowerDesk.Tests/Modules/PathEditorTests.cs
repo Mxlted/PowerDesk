@@ -432,4 +432,69 @@ public sealed class PathEditorTests
             Directory.Delete(dir, recursive: true);
         }
     }
+
+    // ---------- drag-drop ----------
+
+    [Fact]
+    public void ResolveDropFolders_FoldersAsIsFilesToParentDedupedMissingIgnored()
+    {
+        // Like Directory.Exists, the fake tolerates a trailing separator.
+        var dirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { @"C:\Tools", @"C:\Other" };
+        var files = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { @"C:\Tools\app.exe", @"C:\Bin\x.cmd" };
+
+        var (folders, ignored) = PathLogic.ResolveDropFolders(
+            new[] { @"C:\Tools\", @"C:\Tools\app.exe", @"c:\tools", @"C:\Bin\x.cmd", @"C:\Other\", @"C:\Nope", "" },
+            p => dirs.Contains(p.TrimEnd('\\')), files.Contains);
+
+        Assert.Equal(new[] { @"C:\Tools", @"C:\Bin", @"C:\Other" }, folders);
+        Assert.Equal(1, ignored);
+
+        var (none, noneIgnored) = PathLogic.ResolveDropFolders(null, _ => false, _ => false);
+        Assert.Empty(none);
+        Assert.Equal(0, noneIgnored);
+    }
+
+    [Fact]
+    public void AddEntriesFromDrop_AppendsFoldersMarksDirtyAndReportsCount()
+    {
+        var (vm, _, _, _) = CreateViewModel();
+        vm.LoadPathCommand.Execute(null);
+        var dir = Path.Combine(Path.GetTempPath(), "PowerDeskTests", Guid.NewGuid().ToString("N"));
+        var sub = Path.Combine(dir, "sub");
+        Directory.CreateDirectory(sub);
+        var exe = Path.Combine(sub, "tool.exe");
+        File.WriteAllText(exe, "x");
+        try
+        {
+            var added = vm.AddEntriesFromDrop(new[] { dir, exe, Path.Combine(dir, "missing") });
+
+            Assert.Equal(2, added);
+            Assert.Equal(4, vm.EntryCount);
+            Assert.Equal(dir, vm.Entries[2].Value);
+            Assert.Equal(sub, vm.Entries[3].Value);
+            Assert.Same(vm.Entries[3], vm.SelectedEntry);
+            Assert.True(vm.IsDirty);
+            Assert.True(vm.RemoveSelectedEntryCommand.CanExecute(null));
+
+            // A second drop of the same folder is appended but flagged as a duplicate.
+            Assert.Equal(1, vm.AddEntriesFromDrop(new[] { dir + "\\" }));
+            Assert.True(vm.Entries[4].IsDuplicate);
+            Assert.Equal(1, vm.DuplicateCount);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void AddEntriesFromDrop_NothingUsable_LeavesListUntouched()
+    {
+        var (vm, _, _, _) = CreateViewModel();
+        vm.LoadPathCommand.Execute(null);
+        Assert.Equal(0, vm.AddEntriesFromDrop(new[] { Path.Combine(Path.GetTempPath(), "PowerDeskTests", Guid.NewGuid().ToString("N")) }));
+        Assert.Equal(0, vm.AddEntriesFromDrop(null));
+        Assert.Equal(2, vm.EntryCount);
+        Assert.False(vm.IsDirty);
+    }
 }

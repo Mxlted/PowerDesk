@@ -217,4 +217,39 @@ public sealed class HostProfilesTests
             Directory.Delete(dir, recursive: true);
         }
     }
+
+    // ---------- import / export naming ----------
+
+    [Theory]
+    [InlineData(@"C:\Windows\System32\drivers\etc\hosts", "Imported hosts")]
+    [InlineData(@"C:\x\HOSTS", "Imported hosts")]
+    [InlineData(@"C:\x\work.hosts", "work")]
+    [InlineData(@"C:\x\dev machines.txt", "dev machines")]
+    [InlineData(@"C:\x\hosts.bak", "Imported hosts")]
+    [InlineData(@"C:\x\blocklist.conf", "blocklist")]
+    [InlineData(@"C:\x\site.example.com", "site.example.com")]
+    [InlineData("", "Imported hosts")]
+    [InlineData(null, "Imported hosts")]
+    public void ProfileNameFromPath_StripsGenericExtensionsAndFallsBack(string? path, string expected)
+        => Assert.Equal(expected, HostProfilesLogic.ProfileNameFromPath(path));
+
+    [Fact]
+    public void ProfileNameFromPath_TrimsToLimit()
+    {
+        var name = HostProfilesLogic.ProfileNameFromPath(@"C:\x\" + new string('a', 200) + ".txt");
+        Assert.Equal(HostProfilesLogic.MaxProfileNameLength, name.Length);
+    }
+
+    [Theory]
+    [InlineData("Work", "Work.txt")]
+    [InlineData("  Home / Lab: v2  ", "Home - Lab- v2.txt")]
+    [InlineData("", "hosts.txt")]
+    [InlineData(null, "hosts.txt")]
+    [InlineData("...", "hosts.txt")]
+    public void ExportFileName_IsSafeForTheFileSystem(string? name, string expected)
+    {
+        var result = HostProfilesLogic.ExportFileName(name);
+        Assert.Equal(expected, result);
+        Assert.DoesNotContain(result, c => Path.GetInvalidFileNameChars().Contains(c));
+    }
 }

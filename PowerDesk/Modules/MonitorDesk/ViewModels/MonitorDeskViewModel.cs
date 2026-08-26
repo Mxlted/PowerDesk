@@ -12,7 +12,10 @@ using PowerDesk.Core.Services;
 using PowerDesk.Core.Storage;
 using PowerDesk.Modules.MonitorDesk.Models;
 using PowerDesk.Modules.MonitorDesk.Services;
+using System.IO;
 using Clipboard = System.Windows.Clipboard;
+using OpenFileDialog = Microsoft.Win32.OpenFileDialog;
+using SaveFileDialog = Microsoft.Win32.SaveFileDialog;
 using Screen = System.Windows.Forms.Screen;
 
 namespace PowerDesk.Modules.MonitorDesk.ViewModels;
@@ -40,6 +43,7 @@ public sealed partial class MonitorDeskViewModel : ObservableObject
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(ApplyLayoutCommand))]
     [NotifyCanExecuteChangedFor(nameof(RemoveLayoutCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ExportLayoutCommand))]
     [NotifyPropertyChangedFor(nameof(SelectedLayoutSummary))]
     [NotifyPropertyChangedFor(nameof(IsSelectedLayoutActive))]
     private MonitorLayoutPreset? _selectedLayout;
@@ -391,6 +395,133 @@ public sealed partial class MonitorDeskViewModel : ObservableObject
         await SaveAsync();
         _recent.Add("MonitorDesk", $"Removed layout {preset.Name}.");
         _status.Set($"Monitor layout \"{preset.Name}\" removed.", StatusKind.Info);
+    }
+
+    private bool CanExportLayout(MonitorLayoutPreset? preset) => (preset ?? SelectedLayout) is not null;
+
+    [RelayCommand(CanExecute = nameof(CanExportLayout))]
+    private void ExportLayout(MonitorLayoutPreset? preset)
+    {
+        preset ??= SelectedLayout;
+        if (preset is null)
+        {
+            _status.Set("Choose a saved layout first.", StatusKind.Warning);
+            return;
+        }
+        try
+        {
+            var dlg = new SaveFileDialog
+            {
+                Title = "Export monitor layout",
+                FileName = MonitorLayoutLogic.ExportFileName(preset.Name),
+                Filter = "Monitor layout (*.json)|*.json|All files|*.*",
+                AddExtension = true,
+            };
+            if (dlg.ShowDialog() != true) return;
+            File.WriteAllText(dlg.FileName, MonitorLayoutLogic.SerializeLayouts([preset]));
+            _recent.Add("MonitorDesk", $"Exported layout {preset.Name}.");
+            _status.Set($"Layout \"{preset.Name}\" exported to {Path.GetFileName(dlg.FileName)}.", StatusKind.Success);
+        }
+        catch (Exception ex)
+        {
+            _log.Error("MonitorDesk export layout", ex);
+            _status.Set($"Could not export the layout: {ex.Message}", StatusKind.Error);
+        }
+    }
+
+    [RelayCommand]
+    private async Task ImportLayoutAsync()
+    {
+        string[] files;
+        try
+        {
+            var dlg = new OpenFileDialog
+            {
+                Title = "Import monitor layout",
+                Filter = "Monitor layout (*.json)|*.json|All files|*.*",
+                Multiselect = true,
+                CheckFileExists = true,
+            };
+            if (dlg.ShowDialog() != true) return;
+            files = dlg.FileNames;
+        }
+        catch (Exception ex)
+        {
+            _log.Error("MonitorDesk import layout (picker)", ex);
+            _status.Set("Could not open the file picker.", StatusKind.Warning);
+            return;
+        }
+        await ImportLayoutsFromPathsAsync(files);
+    }
+
+    /// <summary>
+    /// Imports layouts from dropped/picked JSON files. Names are made unique, nothing is applied to the
+    /// displays, and the first imported layout becomes the selection. Never throws.
+    /// </summary>
+    public async Task ImportLayoutsFromPathsAsync(IEnumerable<string>? paths)
+    {
+        var candidates = (paths ?? [])
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .Select(p => p.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (candidates.Count == 0) return;
+
+        var imported = new List<MonitorLayoutPreset>();
+        var problems = new List<string>();
+        foreach (var path in candidates)
+        {
+            try
+            {
+                if (!File.Exists(path))
+                {
+                    problems.Add(Directory.Exists(path) ? $"{Path.GetFileName(path)} is a folder" : $"{Path.GetFileName(path)} does not exist");
+                    continue;
+                }
+                var info = new FileInfo(path);
+                if (info.Length > MonitorLayoutLogic.MaxImportBytes)
+                {
+                    problems.Add($"{info.Name} is too large to be a layout file");
+                    continue;
+                }
+                if (!MonitorLayoutLogic.TryParseLayoutFile(File.ReadAllText(path), out var layouts, out var error))
+                {
+                    problems.Add($"{info.Name}: {error}");
+                    continue;
+                }
+                foreach (var layout in layouts)
+                {
+                    layout.Name = MonitorLayoutLogic.UniqueLayoutName(layout.Name, LayoutPresets.Select(p => p.Name), DateTime.Now);
+                    LayoutPresets.Insert(0, layout);
+                    imported.Add(layout);
+                }
+            }
+            catch (Exception ex)
+            {
+                _log.Error($"MonitorDesk import layout: {path}", ex);
+                problems.Add($"{Path.GetFileName(path)} could not be read");
+            }
+        }
+
+        if (imported.Count > 0)
+        {
+            SelectedLayout = imported[0];
+            LayoutWarning = string.Empty;
+            RaiseLayoutCounts();
+            await SaveAsync();
+            _recent.Add("MonitorDesk", imported.Count == 1
+                ? $"Imported layout {imported[0].Name}."
+                : $"Imported {imported.Count} layouts.");
+        }
+
+        var summary = imported.Count switch
+        {
+            0 => "No layouts were imported.",
+            1 => $"Imported layout \"{imported[0].Name}\". Press Apply to use it.",
+            _ => $"Imported {imported.Count} layouts.",
+        };
+        if (problems.Count > 0) summary += $" {string.Join(" ", problems.Select(p => p.TrimEnd('.') + "."))}";
+        _status.Set(summary, imported.Count == 0 ? StatusKind.Warning : problems.Count > 0 ? StatusKind.Warning : StatusKind.Success);
     }
 
     [RelayCommand]

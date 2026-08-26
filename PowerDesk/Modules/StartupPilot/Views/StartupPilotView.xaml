@@ -17,7 +17,10 @@
         </Style>
     </UserControl.Resources>
 
-    <Grid Margin="32,24">
+    <UserControl.InputBindings>
+        <KeyBinding Key="F5" Command="{Binding RescanCommand}"/>
+    </UserControl.InputBindings>
+    <Grid Margin="32,24" AllowDrop="True" PreviewDragOver="Root_PreviewDragOver" PreviewDrop="Root_PreviewDrop" Background="Transparent">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
@@ -30,7 +33,7 @@
             <StackPanel DockPanel.Dock="Left">
                 <TextBlock Style="{StaticResource TextDisplay}" Text="StartupPilot"/>
                 <TextBlock Style="{StaticResource TextCaption}" Margin="0,4,0,0"
-                           Text="Inspect and control everything Windows runs at sign-in."/>
+                           Text="Inspect and control everything Windows runs at sign-in. Drop a program or shortcut anywhere on this page to add it to your Startup folder."/>
             </StackPanel>
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right">
                 <Border Style="{StaticResource Pill}" Margin="0,0,12,0"
@@ -40,8 +43,10 @@
                 </Border>
                 <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,12,0"
                            Text="{Binding LastScan, StringFormat='Last scan: {0:HH:mm:ss}', TargetNullValue='Not scanned yet'}"/>
+                <Button Content="Add to startup…" Margin="0,0,8,0" Command="{Binding AddStartupEntryCommand}"
+                        ToolTip="Pick a program or shortcut to launch at sign-in. A shortcut is placed in your Startup folder (or drop files onto this page)."/>
                 <Button Content="Rescan" Style="{StaticResource PrimaryButton}" Command="{Binding RescanCommand}"
-                        ToolTip="Scan registry Run keys, startup folders, scheduled tasks and services again."/>
+                        ToolTip="Scan registry Run keys, startup folders, scheduled tasks and services again (F5)."/>
                 <Button Content="Relaunch as administrator" Margin="8,0,0,0"
                         Command="{Binding RelaunchAsAdminCommand}"
                         ToolTip="Restart PowerDesk elevated so machine-wide startup items can be changed."
@@ -260,7 +265,7 @@
                                         Visibility="{Binding ItemsView.IsEmpty, Converter={StaticResource BoolToVis}}">
                                 <TextBlock Text="No startup entries to show" Style="{StaticResource TextSubtitle}"
                                            HorizontalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}"/>
-                                <TextBlock Text="Run a scan, or loosen the search and filters above."
+                                <TextBlock Text="Run a scan, loosen the search and filters above, or drop a program here to add it to startup."
                                            Style="{StaticResource TextCaption}" HorizontalAlignment="Center" Margin="0,6,0,0"/>
                             </StackPanel>
                         </Grid>

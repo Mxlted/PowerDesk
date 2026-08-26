@@ -333,4 +333,71 @@ public sealed class MonitorDeskTests
         Assert.Equal("2 displays", preset.DisplayCountLabel);
         Assert.Equal("No displays", new MonitorLayoutPreset().Summary);
     }
+
+    // ---------- import / export ----------
+
+    [Fact]
+    public void SerializeThenParse_RoundTripsLayoutsWithFreshIds()
+    {
+        var original = Preset(Display(@"\\.\DISPLAY1", 0, 0, primary: true), Display(@"\\.\DISPLAY2", 1920, -200, 2560, 1440));
+        original.Name = "Desk";
+        original.CreatedAt = new DateTime(2026, 1, 2, 3, 4, 5);
+
+        var json = MonitorLayoutLogic.SerializeLayouts([original]);
+        Assert.Contains(MonitorLayoutLogic.ExportKind, json);
+
+        Assert.True(MonitorLayoutLogic.TryParseLayoutFile(json, out var layouts, out var error), error);
+        var parsed = Assert.Single(layouts);
+        Assert.Equal("Desk", parsed.Name);
+        Assert.Equal(original.CreatedAt, parsed.CreatedAt);
+        Assert.NotEqual(original.Id, parsed.Id);
+        Assert.Equal(2, parsed.Displays.Count);
+        Assert.Equal(@"\\.\DISPLAY2", parsed.Displays[1].DeviceName);
+        Assert.Equal(1920, parsed.Displays[1].X);
+        Assert.Equal(-200, parsed.Displays[1].Y);
+        Assert.Equal(2560, parsed.Displays[1].Width);
+        Assert.True(parsed.Displays[0].IsPrimary);
+        Assert.True(MonitorLayoutLogic.LayoutMatches(parsed,
+            [Monitor(@"\\.\DISPLAY1", 0, 0, primary: true), Monitor(@"\\.\DISPLAY2", 1920, -200, 2560, 1440)]));
+    }
+
+    [Fact]
+    public void TryParseLayoutFile_AcceptsBarePresetAndArrayAndNormalises()
+    {
+        const string bare = """{"name":"  Bare  ","displays":[{"deviceName":"\\\\.\\DISPLAY3","x":0,"y":0,"width":1920,"height":1080,"isPrimary":true}]}""";
+        Assert.True(MonitorLayoutLogic.TryParseLayoutFile(bare, out var one, out _));
+        var p = Assert.Single(one);
+        Assert.Equal("Bare", p.Name);
+        Assert.Equal(3, p.Displays[0].DisplayNumber);
+        Assert.NotEqual(default, p.CreatedAt);
+
+        const string array = """[{"displays":[{"deviceName":"\\\\.\\DISPLAY1","width":1,"height":1}]},{"name":"Zero","displays":[{"width":0,"height":0}]},null]""";
+        Assert.True(MonitorLayoutLogic.TryParseLayoutFile(array, out var many, out _));
+        var only = Assert.Single(many);
+        Assert.Equal("Imported layout", only.Name);
+    }
+
+    [Theory]
+    [InlineData("", "empty")]
+    [InlineData("   ", "empty")]
+    [InlineData("{ not json", "not valid JSON")]
+    [InlineData("42", "not a PowerDesk monitor layout")]
+    [InlineData("""{"foo":1}""", "not a PowerDesk monitor layout")]
+    [InlineData("""{"kind":"Something.Else","layouts":[]}""", "not a PowerDesk monitor layout")]
+    [InlineData("""{"kind":"PowerDesk.MonitorLayout","layouts":[]}""", "no usable layouts")]
+    [InlineData("""{"displays":[]}""", "no usable layouts")]
+    public void TryParseLayoutFile_RejectsWithReason(string json, string expectedFragment)
+    {
+        Assert.False(MonitorLayoutLogic.TryParseLayoutFile(json, out var layouts, out var error));
+        Assert.Empty(layouts);
+        Assert.Contains(expectedFragment, error, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("Desk", "Desk.monitorlayout.json")]
+    [InlineData("Home: TV / couch", "Home- TV - couch.monitorlayout.json")]
+    [InlineData("", "monitor-layout.monitorlayout.json")]
+    [InlineData(null, "monitor-layout.monitorlayout.json")]
+    public void ExportFileName_IsSafe(string? name, string expected)
+        => Assert.Equal(expected, MonitorLayoutLogic.ExportFileName(name));
 }

@@ -181,4 +181,121 @@ internal static class HashDeskLogic
     }
 
     internal static string ToHex(byte[]? bytes) => bytes is null ? string.Empty : Convert.ToHexString(bytes).ToLowerInvariant();
+
+    // ---------------------------------------------------------------- drag-drop payloads
+
+    /// <summary>Upper bound on files taken from a single dropped folder so a drop of C:\ cannot run away.</summary>
+    internal const int MaxFolderFiles = 500;
+
+    /// <summary>Checksum sidecar extensions whose content is an expected digest rather than data to hash.</summary>
+    private static readonly HashSet<string> ChecksumExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".sha256", ".sha1", ".md5", ".sha256sum", ".sha1sum", ".md5sum", ".checksum", ".hash", ".digest",
+    };
+
+    internal static bool IsChecksumFile(string? path)
+        => !string.IsNullOrWhiteSpace(path) && ChecksumExtensions.Contains(Path.GetExtension(path));
+
+    internal sealed record DropExpansion(List<string> Files, List<string> ChecksumFiles, int FoldersExpanded, bool Truncated, int Ignored);
+
+    /// <summary>
+    /// Turns a raw drop payload into hashable files. Folders contribute their top-level files (not
+    /// recursive, capped at <see cref="MaxFolderFiles"/> per folder); checksum sidecars are split out
+    /// so the caller can load them as the expected digest instead of hashing them; anything that does
+    /// not exist is counted as ignored. Duplicates are removed case-insensitively, first occurrence wins.
+    /// </summary>
+    internal static DropExpansion ExpandDropPaths(
+        IEnumerable<string>? paths,
+        Func<string, bool> fileExists,
+        Func<string, bool> directoryExists,
+        Func<string, IEnumerable<string>> enumerateFiles,
+        int maxFolderFiles = MaxFolderFiles)
+    {
+        var files = new List<string>();
+        var checksums = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var folders = 0;
+        var truncated = false;
+        var ignored = 0;
+
+        foreach (var raw in paths ?? [])
+        {
+            if (string.IsNullOrWhiteSpace(raw)) continue;
+            var path = raw.Trim();
+            if (fileExists(path))
+            {
+                Add(path);
+            }
+            else if (directoryExists(path))
+            {
+                folders++;
+                var taken = 0;
+                IEnumerable<string> children;
+                try { children = enumerateFiles(path); }
+                catch { ignored++; continue; }
+                foreach (var child in children)
+                {
+                    if (taken >= maxFolderFiles) { truncated = true; break; }
+                    if (string.IsNullOrWhiteSpace(child)) continue;
+                    if (Add(child)) taken++;
+                }
+            }
+            else
+            {
+                ignored++;
+            }
+        }
+
+        return new DropExpansion(files, checksums, folders, truncated, ignored);
+
+        bool Add(string file)
+        {
+            if (!seen.Add(file)) return false;
+            if (IsChecksumFile(file)) checksums.Add(file);
+            else files.Add(file);
+            return true;
+        }
+    }
+
+    internal sealed record ChecksumEntry(string Digest, string? FileName);
+
+    /// <summary>
+    /// Reads the first digest from a checksum file in the common formats:
+    /// <c>DIGEST  file</c>, <c>DIGEST *file</c> (sha256sum), <c>file: DIGEST</c>, or a bare digest.
+    /// Only 32/40/64-character hex digests are accepted; comment and blank lines are skipped.
+    /// </summary>
+    internal static ChecksumEntry? ParseChecksumFile(string? content)
+    {
+        if (string.IsNullOrWhiteSpace(content)) return null;
+        foreach (var rawLine in content.Split('\n'))
+        {
+            var line = rawLine.Trim().TrimStart('\uFEFF').Trim();
+            if (line.Length == 0 || line[0] == '#' || line[0] == ';') continue;
+
+            // "file: DIGEST" / "SHA256 (file) = DIGEST" style: digest is the last token.
+            var tokens = line.Split([' ', '\t'], StringSplitOptions.RemoveEmptyEntries);
+            if (tokens.Length == 0) continue;
+
+            var first = NormalizeExpected(tokens[0]);
+            if (DetectAlgorithm(first) != HashAlgorithmKind.Unknown)
+            {
+                var name = tokens.Length > 1 ? line[tokens[0].Length..].Trim().TrimStart('*').Trim() : null;
+                return new ChecksumEntry(first, string.IsNullOrWhiteSpace(name) ? null : name);
+            }
+
+            var last = NormalizeExpected(tokens[^1]);
+            if (DetectAlgorithm(last) != HashAlgorithmKind.Unknown)
+            {
+                var head = line[..^tokens[^1].Length].Trim().TrimEnd('=', ':').Trim();
+                if (head.StartsWith("SHA", StringComparison.OrdinalIgnoreCase) || head.StartsWith("MD5", StringComparison.OrdinalIgnoreCase))
+                {
+                    var open = head.IndexOf('(');
+                    var close = head.LastIndexOf(')');
+                    head = open >= 0 && close > open ? head[(open + 1)..close].Trim() : string.Empty;
+                }
+                return new ChecksumEntry(last, string.IsNullOrWhiteSpace(head) ? null : head);
+            }
+        }
+        return null;
+    }
 }

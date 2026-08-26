@@ -3,7 +3,10 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              Background="{DynamicResource SurfaceBaseBrush}"
              Foreground="{DynamicResource TextPrimaryBrush}">
-    <Grid Margin="32,24" AllowDrop="True" DragOver="Root_DragOver" Drop="Root_Drop" Background="Transparent">
+    <UserControl.InputBindings>
+        <KeyBinding Key="F5" Command="{Binding ScanCommand}"/>
+    </UserControl.InputBindings>
+    <Grid Margin="32,24" AllowDrop="True" PreviewDragOver="Root_PreviewDragOver" PreviewDrop="Root_PreviewDrop" Background="Transparent">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
@@ -53,7 +56,7 @@
                 <Button Grid.Row="0" Grid.Column="2" Content="Folder" Margin="8,0,0,0" Command="{Binding SelectFolderCommand}"
                         ToolTip="Pick a folder; every file inside (up to a cap) is checked"/>
                 <Button Grid.Row="0" Grid.Column="3" Content="Scan" Margin="8,0,0,0" Style="{StaticResource PrimaryButton}"
-                        Command="{Binding ScanCommand}" ToolTip="Ask the Windows Restart Manager which processes hold this path"/>
+                        Command="{Binding ScanCommand}" ToolTip="Ask the Windows Restart Manager which processes hold this path (F5)"/>
 
                 <ProgressBar Grid.Row="1" Grid.ColumnSpan="4" IsIndeterminate="True" Height="3" Margin="0,10,0,0"
                              Visibility="{Binding IsScanning, Converter={StaticResource BoolToVis}}"/>

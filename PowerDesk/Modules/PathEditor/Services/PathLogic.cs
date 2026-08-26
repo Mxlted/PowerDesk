@@ -136,6 +136,36 @@ internal static class PathLogic
     }
 
     /// <summary>
+    /// Maps a drag-drop payload to folders that can become PATH entries: folders are taken as-is,
+    /// files contribute their parent folder (dropping an .exe is the common "add this tool" gesture),
+    /// and anything that does not exist is counted as ignored. Duplicates within the payload are
+    /// collapsed (case-insensitive, normalised); first occurrence wins.
+    /// </summary>
+    public static (List<string> Folders, int Ignored) ResolveDropFolders(
+        IEnumerable<string>? paths, Func<string, bool> directoryExists, Func<string, bool> fileExists)
+    {
+        var folders = new List<string>();
+        var seen = new HashSet<string>(Comparer);
+        var ignored = 0;
+        foreach (var raw in paths ?? [])
+        {
+            if (string.IsNullOrWhiteSpace(raw)) continue;
+            var path = raw.Trim();
+            string? folder = null;
+            if (directoryExists(path)) folder = path;
+            else if (fileExists(path))
+            {
+                try { folder = Path.GetDirectoryName(path); } catch { folder = null; }
+            }
+
+            if (string.IsNullOrWhiteSpace(folder)) { ignored++; continue; }
+            folder = TrimTrailingSeparators(folder);
+            if (seen.Add(NormalizeForCompare(folder))) folders.Add(folder);
+        }
+        return (folders, ignored);
+    }
+
+    /// <summary>
     /// Rejects entries that could never be a folder path (control characters, '|', '<', '>', or an
     /// unbalanced quote). Returns null when the entry is acceptable.
     /// </summary>

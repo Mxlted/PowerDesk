@@ -213,4 +213,43 @@ internal static class HostProfilesLogic
     }
 
     internal static string BackupFileName(DateTime timestamp) => $"hosts-backup-{timestamp:yyyyMMdd-HHmmss}.txt";
+
+    /// <summary>A hosts file is a few KB; anything past this is not one and is refused on import.</summary>
+    internal const long MaxImportBytes = 1024 * 1024;
+
+    private static readonly HashSet<string> StrippableExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".txt", ".hosts", ".bak", ".backup", ".old", ".orig", ".conf",
+    };
+
+    /// <summary>
+    /// Derives a profile name from an imported file: the file name without a generic extension
+    /// ("work.hosts" → "work"), "hosts" itself becomes "Imported hosts", trimmed to the name limit.
+    /// </summary>
+    internal static string ProfileNameFromPath(string? path)
+    {
+        const string fallback = "Imported hosts";
+        if (string.IsNullOrWhiteSpace(path)) return fallback;
+        string name;
+        try { name = Path.GetFileName(path.Trim()); }
+        catch { return fallback; }
+        if (StrippableExtensions.Contains(Path.GetExtension(name)))
+            name = Path.GetFileNameWithoutExtension(name);
+        name = name.Trim();
+        if (name.Length == 0 || string.Equals(name, "hosts", StringComparison.OrdinalIgnoreCase)) return fallback;
+        if (name.Length > MaxProfileNameLength) name = name[..MaxProfileNameLength].TrimEnd();
+        return name.Length == 0 ? fallback : name;
+    }
+
+    /// <summary>File name for exporting a profile: invalid characters replaced, ".txt" appended.</summary>
+    internal static string ExportFileName(string? profileName)
+    {
+        var name = (profileName ?? string.Empty).Trim();
+        if (name.Length == 0) name = "hosts";
+        var invalid = Path.GetInvalidFileNameChars();
+        var chars = name.Select(c => invalid.Contains(c) ? '-' : c).ToArray();
+        var safe = new string(chars).Trim('-', ' ', '.');
+        if (safe.Length == 0) safe = "hosts";
+        return safe + ".txt";
+    }
 }

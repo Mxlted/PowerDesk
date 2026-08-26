@@ -231,6 +231,54 @@ internal static class StartupPilotLogic
 
     public static string NoteKey(StartupSource source, string locator) => $"{source}|{locator}";
 
+    // ---------------------------------------------------------------- Adding startup-folder entries
+
+    /// <summary>
+    /// Files Explorer can launch directly from the Startup folder without wrapping them in a shortcut.
+    /// Everything else gets a .lnk pointing at it.
+    /// </summary>
+    public static bool IsShortcutLike(string? path)
+    {
+        var ext = Path.GetExtension(path ?? string.Empty);
+        return ext.Equals(".lnk", StringComparison.OrdinalIgnoreCase) || ext.Equals(".url", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// File name to create in the Startup folder for a target: shortcuts keep their own name and
+    /// extension, anything else becomes "&lt;name&gt;.lnk". Characters Windows forbids in names are replaced.
+    /// </summary>
+    public static string StartupEntryFileName(string targetPath)
+    {
+        var name = Path.GetFileNameWithoutExtension(targetPath ?? string.Empty).Trim();
+        if (name.Length == 0) name = "Startup item";
+        var invalid = Path.GetInvalidFileNameChars();
+        name = new string(name.Select(c => invalid.Contains(c) ? '-' : c).ToArray()).Trim('.', ' ', '-');
+        if (name.Length == 0) name = "Startup item";
+        var ext = IsShortcutLike(targetPath) ? Path.GetExtension(targetPath!) : ".lnk";
+        return name + ext;
+    }
+
+    /// <summary>
+    /// Filters a drag-drop payload down to files that can become startup entries. Folders cannot
+    /// be launched at sign-in and are counted separately from paths that do not exist.
+    /// </summary>
+    public static (List<string> Files, int Folders, int Missing) PickStartupDropTargets(
+        IEnumerable<string>? paths, Func<string, bool> fileExists, Func<string, bool> directoryExists)
+    {
+        var files = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        int folders = 0, missing = 0;
+        foreach (var raw in paths ?? [])
+        {
+            if (string.IsNullOrWhiteSpace(raw)) continue;
+            var path = raw.Trim();
+            if (fileExists(path)) { if (seen.Add(path)) files.Add(path); }
+            else if (directoryExists(path)) folders++;
+            else missing++;
+        }
+        return (files, folders, missing);
+    }
+
     // ---------------------------------------------------------------- History
 
     /// <summary>Trims history in place. Entries are kept newest-first; retention keeps the most recent entries regardless of list order.</summary>

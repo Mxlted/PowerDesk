@@ -432,6 +432,90 @@ public sealed partial class StartupPilotViewModel : ObservableObject
     }
 
     [RelayCommand]
+    public async Task AddStartupEntryAsync()
+    {
+        string[] files;
+        try
+        {
+            var dlg = new Microsoft.Win32.OpenFileDialog
+            {
+                Title = "Add to Startup",
+                Filter = "Programs and shortcuts|*.exe;*.lnk;*.url;*.bat;*.cmd;*.ps1;*.vbs;*.msc|All files|*.*",
+                Multiselect = true,
+                CheckFileExists = true,
+            };
+            if (dlg.ShowDialog() != true) return;
+            files = dlg.FileNames;
+        }
+        catch (Exception ex)
+        {
+            _log.Error("Add startup entry (picker)", ex);
+            _status.Set("Could not open the file picker.", StatusKind.Warning);
+            return;
+        }
+        await AddStartupEntriesAsync(files);
+    }
+
+    /// <summary>
+    /// Adds dropped/picked programs to the current user's Startup folder (as shortcuts) after one
+    /// confirmation, then rescans so they show up in the list. Never throws.
+    /// </summary>
+    public async Task AddStartupEntriesAsync(IEnumerable<string>? paths)
+    {
+        var (files, folders, missing) = StartupPilotLogic.PickStartupDropTargets(paths, File.Exists, Directory.Exists);
+        if (files.Count == 0)
+        {
+            _status.Set(folders > 0
+                ? "Folders cannot be launched at sign-in. Drop the program or shortcut itself."
+                : "Dropped items are not files on disk.", StatusKind.Warning);
+            return;
+        }
+
+        var preview = string.Join("\n", files.Take(6).Select(f => "  • " + Path.GetFileName(f)));
+        if (files.Count > 6) preview += $"\n  … and {files.Count - 6} more";
+        var prompt = files.Count == 1
+            ? $"Add '{Path.GetFileName(files[0])}' to your Startup folder?\n\nIt will launch every time you sign in. You can disable it from this list later or delete the shortcut from the Startup folder."
+            : $"Add {files.Count} items to your Startup folder?\n\n{preview}\n\nThey will launch every time you sign in. You can disable them from this list later or delete the shortcuts from the Startup folder.";
+        if (!_confirm.Confirm(prompt, "Add to startup", destructive: false)) return;
+
+        if (!TryBeginApply()) return;
+        var added = new List<string>();
+        var failed = new List<string>();
+        try
+        {
+            foreach (var file in files)
+            {
+                var result = await RunControllerAsync(() => _controller.AddStartupFolderEntry(file, allUsers: false));
+                if (result.Success && result.UpdatedLocator is { } locator) added.Add(locator);
+                else failed.Add($"{Path.GetFileName(file)}: {result.Message}");
+            }
+        }
+        finally { IsApplying = false; }
+
+        if (added.Count > 0)
+        {
+            _recent.Add("StartupPilot", added.Count == 1
+                ? $"Added to startup: {Path.GetFileNameWithoutExtension(added[0])}"
+                : $"Added {added.Count} startup entries.");
+            await RescanAsync();
+            var created = Items.FirstOrDefault(i => i.Source == StartupSource.StartupFolder
+                && string.Equals(i.Locator, added[0], StringComparison.OrdinalIgnoreCase));
+            if (created is not null) SelectedItem = created;
+        }
+
+        var summary = added.Count switch
+        {
+            0 => "Nothing was added.",
+            1 => $"Added '{Path.GetFileNameWithoutExtension(added[0])}' to your Startup folder.",
+            _ => $"Added {added.Count} entries to your Startup folder.",
+        };
+        if (failed.Count > 0) summary += $" Failed: {string.Join("; ", failed)}";
+        if (folders > 0) summary += $" {folders} folder(s) skipped.";
+        if (missing > 0) summary += $" {missing} item(s) not found.";
+        _status.Set(summary, added.Count == 0 ? StatusKind.Error : failed.Count > 0 || folders > 0 || missing > 0 ? StatusKind.Warning : StatusKind.Success);
+    }
+
+    [RelayCommand]
     public async Task BulkEnableAsync(System.Collections.IList? selection)
     {
         await BulkSetAsync(selection, enable: true);

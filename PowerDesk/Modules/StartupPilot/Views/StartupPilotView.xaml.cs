@@ -3,6 +3,8 @@ using System.Threading.Tasks;
 using System.Windows;
 using PowerDesk.Modules.StartupPilot.Models;
 using PowerDesk.Modules.StartupPilot.ViewModels;
+using PowerDesk.Shared.DragDrop;
+using DragEventArgs = System.Windows.DragEventArgs;
 using UserControl = System.Windows.Controls.UserControl;
 using DataGrid = System.Windows.Controls.DataGrid;
 using DataGridRow = System.Windows.Controls.DataGridRow;
@@ -32,6 +34,11 @@ public partial class StartupPilotView : UserControl
         try { await work; }
         catch (Exception ex) { App.Instance?.Logger?.Error("StartupPilot view", ex); }
     }
+
+    private void Root_PreviewDragOver(object sender, DragEventArgs e) => FileDrop.OnDragOver(e);
+
+    private void Root_PreviewDrop(object sender, DragEventArgs e)
+        => FileDrop.OnDrop(e, paths => Run(_vm.AddStartupEntriesAsync(paths)));
 
     private void EnableToggle_Click(object sender, RoutedEventArgs e)
     {

@@ -194,16 +194,57 @@ public sealed partial class PathEditorViewModel : ObservableObject
             _status.Set(problem, StatusKind.Warning);
             return;
         }
-        var entry = new PathEntry { Value = value };
-        AddTrackedEntry(entry);
-        SelectedEntry = entry;
+        var entry = AppendEntry(value);
         NewEntry = string.Empty;
-        MarkDirty();
-        ValidateDuplicates();
         _status.Set(entry.IsDuplicate
             ? $"Added '{value}' (already present in this PATH)."
             : $"Added '{value}'. Press Save to apply.", entry.IsDuplicate ? StatusKind.Warning : StatusKind.Info);
+    }
+
+    /// <summary>
+    /// Adds every folder from a drag-drop payload (files contribute their folder) as new entries at the
+    /// end of the PATH. Nothing is written until Save. Returns the number of entries added.
+    /// </summary>
+    public int AddEntriesFromDrop(IEnumerable<string>? paths)
+    {
+        var (folders, ignored) = PathLogic.ResolveDropFolders(paths, System.IO.Directory.Exists, System.IO.File.Exists);
+        if (folders.Count == 0)
+        {
+            _status.Set("Dropped items are not folders or files on disk.", StatusKind.Warning);
+            return 0;
+        }
+
+        var added = 0;
+        var duplicates = 0;
+        var rejected = 0;
+        foreach (var folder in folders)
+        {
+            if (PathLogic.ValidateNewEntry(folder) is not null) { rejected++; continue; }
+            var entry = AppendEntry(folder);
+            added++;
+            if (entry.IsDuplicate) duplicates++;
+        }
+
+        var message = added == 1
+            ? $"Added '{Entries[^1].Value}'. Press Save to apply."
+            : $"Added {added} folder(s). Press Save to apply.";
+        if (duplicates > 0) message += $" {duplicates} already present in this PATH.";
+        if (rejected > 0) message += $" {rejected} skipped (not a valid folder path).";
+        if (ignored > 0) message += $" {ignored} dropped item(s) ignored.";
+        _status.Set(message, duplicates > 0 || rejected > 0 ? StatusKind.Warning : StatusKind.Info);
+        return added;
+    }
+
+    private PathEntry AppendEntry(string value)
+    {
+        var entry = new PathEntry { Value = value };
+        AddTrackedEntry(entry);
+        SelectedEntry = entry;
+        MarkDirty();
+        ValidateDuplicates();
+        RefreshEntryCommands();
         _ = ValidateSingleAsync(entry);
+        return entry;
     }
 
     [RelayCommand]

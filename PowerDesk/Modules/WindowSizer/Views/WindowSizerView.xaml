@@ -4,6 +4,9 @@
              xmlns:sys="clr-namespace:System;assembly=mscorlib"
              Background="{DynamicResource SurfaceBaseBrush}"
              Foreground="{DynamicResource TextPrimaryBrush}">
+    <UserControl.InputBindings>
+        <KeyBinding Key="F5" Command="{Binding RefreshCommand}"/>
+    </UserControl.InputBindings>
     <Grid Margin="32,24">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>

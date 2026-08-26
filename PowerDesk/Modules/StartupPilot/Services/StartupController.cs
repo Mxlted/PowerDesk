@@ -167,6 +167,74 @@ public sealed class StartupController
         return Ok("Already in desired state.", file);
     }
 
+    /// <summary>
+    /// Adds a program to the Startup folder so Explorer launches it at sign-in. Shortcuts (.lnk/.url)
+    /// are copied in as-is; anything else gets a new .lnk created for it. The entry is also marked
+    /// enabled in StartupApproved so a stale "disabled" record for the same file name cannot mute it.
+    /// Never overwrites an existing entry. Returns the created file path as the locator.
+    /// </summary>
+    public StartupActionResult AddStartupFolderEntry(string targetPath, bool allUsers)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(targetPath) || !File.Exists(targetPath))
+                return Fail("The file does not exist.");
+            if (allUsers && !IsAdmin())
+                return Elevate("Adding to the all-users Startup folder requires administrator.");
+
+            var folder = Environment.GetFolderPath(allUsers ? Environment.SpecialFolder.CommonStartup : Environment.SpecialFolder.Startup);
+            if (string.IsNullOrWhiteSpace(folder))
+                return Fail("Windows did not report a Startup folder location.");
+            Directory.CreateDirectory(folder);
+
+            var sourceDir = Path.GetDirectoryName(Path.GetFullPath(targetPath)) ?? string.Empty;
+            if (string.Equals(Path.TrimEndingDirectorySeparator(sourceDir), Path.TrimEndingDirectorySeparator(folder), StringComparison.OrdinalIgnoreCase))
+                return Fail("That file is already in the Startup folder.");
+
+            var fileName = StartupPilotLogic.StartupEntryFileName(targetPath);
+            var dest = Path.Combine(folder, fileName);
+            if (File.Exists(dest) || File.Exists(Path.Combine(folder, "Disabled", fileName)))
+                return Fail($"'{fileName}' already exists in the Startup folder; refusing to overwrite it.");
+
+            if (StartupPilotLogic.IsShortcutLike(targetPath))
+                File.Copy(targetPath, dest, overwrite: false);
+            else
+                CreateShortcut(dest, targetPath);
+
+            var hive = allUsers ? RegistryHive.LocalMachine : RegistryHive.CurrentUser;
+            try { WriteStartupApprovedState(hive, "StartupFolder", fileName, enable: true); }
+            catch (Exception ex) { _log.Warn($"StartupApproved for '{fileName}': {ex.Message}"); }
+
+            var scope = allUsers ? "all-users" : "your";
+            return Ok($"Added '{Path.GetFileNameWithoutExtension(fileName)}' to {scope} Startup folder.", dest);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Elevate("Administrator privileges required.");
+        }
+        catch (Exception ex)
+        {
+            _log.Error($"Add startup entry '{targetPath}'", ex);
+            return Fail(ex.Message);
+        }
+    }
+
+    /// <summary>Creates a .lnk via the Windows Script Host shell object (the same COM API the scanner uses to read them).</summary>
+    private static void CreateShortcut(string shortcutPath, string targetPath)
+    {
+        var type = Type.GetTypeFromProgID("WScript.Shell")
+            ?? throw new InvalidOperationException("Windows Script Host is not available to create shortcuts.");
+        dynamic shell = Activator.CreateInstance(type)
+            ?? throw new InvalidOperationException("Windows Script Host could not be started.");
+        dynamic shortcut = shell.CreateShortcut(shortcutPath);
+        shortcut.TargetPath = targetPath;
+        shortcut.WorkingDirectory = Path.GetDirectoryName(targetPath) ?? string.Empty;
+        shortcut.Description = "Added by PowerDesk StartupPilot";
+        shortcut.Save();
+        if (!File.Exists(shortcutPath))
+            throw new IOException("The shortcut was not created.");
+    }
+
     private static bool TryGetStartupFolderApprovedHive(string path, out RegistryHive hive)
     {
         var perUser  = Environment.GetFolderPath(Environment.SpecialFolder.Startup);
