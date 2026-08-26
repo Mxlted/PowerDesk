@@ -16,7 +16,9 @@ public sealed class HostProfilesModule : IPowerDeskModule
     public string DisplayName => "HostProfiles";
     public string Description => "Manage hosts file profiles with backups and admin-aware apply.";
     public string IconKey => "HostProfiles";
-    public string IconGeometry => "M 5,3 H 19 V 21 H 5 Z M 8,7 H 16 M 8,11 H 16 M 8,15 H 13";
+    // Filled 24x24 geometry (nonzero rule; holes wind the opposite way). Both the sidebar and the dashboard
+    // render this with Fill only, so open stroke paths would be invisible or collapse into solid blobs.
+    public string IconGeometry => "F1 M 5,2 H 14 L 19,7 V 22 H 5 Z M 7,4 V 20 H 17 V 9 H 12 V 4 Z M 9,12 H 15 V 14 H 9 Z M 9,16 H 15 V 18 H 9 Z";
     public bool RequiresAdminForFullControl => true;
 
     public HostProfilesViewModel ViewModel { get; }

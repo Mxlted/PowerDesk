@@ -14,7 +14,9 @@ public sealed class HashDeskModule : IPowerDeskModule
     public string DisplayName => "HashDesk";
     public string Description => "Compute SHA256, SHA1, and MD5 hashes for files or text.";
     public string IconKey => "HashDesk";
-    public string IconGeometry => "M 7,3 H 17 L 21,7 V 21 H 7 Z M 17,3 V 7 H 21 M 3,8 H 12 M 3,12 H 15 M 3,16 H 13";
+    // Filled 24x24 geometry (nonzero rule; holes wind the opposite way). Both the sidebar and the dashboard
+    // render this with Fill only, so open stroke paths would be invisible or collapse into solid blobs.
+    public string IconGeometry => "F1 M 2,7.5 H 22 V 10.5 H 2 Z M 2,13.5 H 22 V 16.5 H 2 Z M 10,2 H 13 L 9,22 H 6 Z M 17,2 H 20 L 16,22 H 13 Z";
     public bool RequiresAdminForFullControl => false;
 
     public UserControl MainView { get; }

@@ -14,7 +14,9 @@ public sealed class ColorPickerModule : IPowerDeskModule
     public string DisplayName => "ColorPicker";
     public string Description => "Sample screen pixels and copy HEX, RGB, or HSL color values.";
     public string IconKey => "ColorPicker";
-    public string IconGeometry => "M 19,3 L 21,5 L 13,13 L 10,14 L 11,11 Z M 4,20 L 9,15 L 12,18 L 7,23 H 4 Z M 5,5 H 13 V 9 H 5 Z";
+    // Filled 24x24 geometry (nonzero rule; holes wind the opposite way). Both the sidebar and the dashboard
+    // render this with Fill only, so open stroke paths would be invisible or collapse into solid blobs.
+    public string IconGeometry => "F1 M 19,2 A 3,3 0 1 1 19,8 A 3,3 0 1 1 19,2 Z M 11.7,8.7 L 15.2,5.2 L 18.8,8.8 L 15.3,12.3 Z M 3.9,17.9 L 13.4,8.4 L 15.6,10.6 L 6.1,20.1 Z M 3.9,17.9 L 6.1,20.1 L 2,22 Z";
     public bool RequiresAdminForFullControl => false;
 
     public UserControl MainView { get; }

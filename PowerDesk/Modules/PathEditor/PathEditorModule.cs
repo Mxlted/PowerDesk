@@ -16,7 +16,9 @@ public sealed class PathEditorModule : IPowerDeskModule
     public string DisplayName => "PathEditor";
     public string Description => "Edit User and Machine PATH entries with validation and backup history.";
     public string IconKey => "PathEditor";
-    public string IconGeometry => "M 4,5 H 20 V 9 H 4 Z M 4,15 H 20 V 19 H 4 Z M 8,9 V 15 M 16,9 V 15";
+    // Filled 24x24 geometry (nonzero rule; holes wind the opposite way). Both the sidebar and the dashboard
+    // render this with Fill only, so open stroke paths would be invisible or collapse into solid blobs.
+    public string IconGeometry => "F1 M 2,4 H 9 L 11,6 H 22 V 20 H 2 Z M 4,8 V 18 H 20 V 8 Z M 10,9 L 14,13 L 10,17 L 8.5,15.5 L 11,13 L 8.5,10.5 Z";
     public bool RequiresAdminForFullControl => true;
 
     public PathEditorViewModel ViewModel { get; }

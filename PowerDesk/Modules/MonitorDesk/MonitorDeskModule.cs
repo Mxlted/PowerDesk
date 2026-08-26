@@ -15,7 +15,9 @@ public sealed class MonitorDeskModule : IPowerDeskModule
     public string DisplayName => "MonitorDesk";
     public string Description => "Inspect display bounds, work areas, and the virtual desktop layout.";
     public string IconKey => "MonitorDesk";
-    public string IconGeometry => "M 3,4 H 21 V 16 H 3 Z M 9,20 H 15 M 12,16 V 20";
+    // Filled 24x24 geometry (nonzero rule; holes wind the opposite way). Both the sidebar and the dashboard
+    // render this with Fill only, so open stroke paths would be invisible or collapse into solid blobs.
+    public string IconGeometry => "F1 M 2,4 H 22 V 17 H 2 Z M 4,6 V 15 H 20 V 6 Z M 11,17 H 13 V 19 H 11 Z M 7,19 H 17 V 21 H 7 Z";
     public bool RequiresAdminForFullControl => false;
 
     public MonitorDeskViewModel ViewModel { get; }
