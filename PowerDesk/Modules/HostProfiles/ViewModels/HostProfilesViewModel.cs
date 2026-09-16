@@ -28,6 +28,7 @@ public sealed partial class HostProfilesViewModel : ObservableObject
     private readonly HostsFileService _hostsFile = new();
     private readonly string _settingsPath;
     private HostProfilesSettings _settings = new();
+    private bool _settingsLoaded;
 
     public ObservableCollection<HostProfile> Profiles { get; } = new();
 
@@ -74,7 +75,16 @@ public sealed partial class HostProfilesViewModel : ObservableObject
 
     public async Task InitializeAsync()
     {
-        _settings = await _storage.LoadAsync(_settingsPath, () => new HostProfilesSettings());
+        try
+        {
+            _settings = await _storage.LoadAsync(_settingsPath, () => new HostProfilesSettings());
+            _settingsLoaded = true;
+        }
+        catch (Exception ex)
+        {
+            _log.Error("HostProfiles settings load", ex);
+            _settings = new HostProfilesSettings();
+        }
         UiDispatcher.Invoke(() =>
         {
             Profiles.Clear();
@@ -85,7 +95,11 @@ public sealed partial class HostProfilesViewModel : ObservableObject
         });
     }
 
-    public async Task ShutdownAsync() => await SaveAsync();
+    /// <summary>Only saves when the settings were actually loaded, so a failed load cannot wipe saved profiles.</summary>
+    public async Task ShutdownAsync()
+    {
+        if (_settingsLoaded) await SaveAsync();
+    }
 
     private async Task SaveAsync()
     {

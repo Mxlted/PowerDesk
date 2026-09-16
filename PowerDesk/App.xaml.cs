@@ -95,6 +95,10 @@ public partial class App : Application
             Logger.Error("Unobserved task exception", args.Exception);
             args.SetObserved();
         };
+        // WPF calls Shutdown() straight after this event and tears the dispatcher down before the
+        // async Closed handler below gets to its first continuation, so on log-off / restart the
+        // window placement, last page and any unsaved module state were lost. Persist synchronously here.
+        SessionEnding += (_, _) => PersistBeforeSessionEnds();
 
         Logger.Info("PowerDesk starting.");
 
@@ -196,6 +200,51 @@ public partial class App : Application
     }
 
     public void SkipShutdownPersistenceOnce() => _skipShutdownPersistence = true;
+
+    /// <summary>
+    /// Saves everything the normal Closed path would, but without yielding to a dispatcher that is
+    /// about to be shut down. Module shutdowns are awaited by pumping a nested message loop (their
+    /// continuations need the UI thread), each under a short budget so a hung module cannot make
+    /// Windows kill us before the app settings are written.
+    /// </summary>
+    private void PersistBeforeSessionEnds()
+    {
+        if (_skipShutdownPersistence) return;
+        _skipShutdownPersistence = true;
+        Logger.Info("Windows session ending; persisting state.");
+        try
+        {
+            Shell?.SavePlacement();
+            foreach (var m in Modules.Modules)
+            {
+                try { WaitWithPump(m.ShutdownAsync(), TimeSpan.FromMilliseconds(1500)); }
+                catch (Exception ex) { Logger.Error($"Module shutdown (session end): {m.Id}", ex); }
+            }
+            // JsonStorageService awaits with ConfigureAwait(false) throughout, so blocking here cannot deadlock.
+            Storage.SaveAsync(Core.Services.PathService.SettingsFile, Settings).GetAwaiter().GetResult();
+            Logger.Info("State persisted for session end.");
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("Session-end persistence", ex);
+        }
+    }
+
+    /// <summary>Waits for a task on the UI thread while still dispatching messages, giving up after <paramref name="timeout"/>.</summary>
+    private static void WaitWithPump(Task task, TimeSpan timeout)
+    {
+        if (task.IsCompleted) { task.GetAwaiter().GetResult(); return; }
+        var frame = new System.Windows.Threading.DispatcherFrame();
+        task.ContinueWith(_ => frame.Continue = false, TaskScheduler.Default);
+        var timer = new System.Windows.Threading.DispatcherTimer(
+            timeout, System.Windows.Threading.DispatcherPriority.Send,
+            (_, _) => frame.Continue = false,
+            System.Windows.Threading.Dispatcher.CurrentDispatcher);
+        timer.Start();
+        try { System.Windows.Threading.Dispatcher.PushFrame(frame); }
+        finally { timer.Stop(); }
+        if (task.IsCompleted) task.GetAwaiter().GetResult();
+    }
 
     public async Task<bool> SaveSettingsAsync()
         => await Storage.SaveAsync(Core.Services.PathService.SettingsFile, Settings);

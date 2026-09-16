@@ -32,6 +32,7 @@ public sealed partial class StartupPilotViewModel : ObservableObject
     private readonly StartupController _controller;
     private readonly string _settingsPath;
     private bool _initializing;
+    private bool _settingsLoaded;
     private bool _rescanRequested;
 
     public ObservableCollection<StartupItem> Items { get; } = new();
@@ -145,6 +146,7 @@ public sealed partial class StartupPilotViewModel : ObservableObject
             Retention = Settings.Retention;
             History.Clear();
             foreach (var h in Settings.History) History.Add(h);
+            _settingsLoaded = true;
         }
         catch (Exception ex)
         {
@@ -162,6 +164,8 @@ public sealed partial class StartupPilotViewModel : ObservableObject
 
     private async Task SaveAsync()
     {
+        // Never overwrite the user's notes/pins/history with defaults when the load itself failed.
+        if (!_settingsLoaded) return;
         Settings.ShowMicrosoftItems = ShowMicrosoft;
         Settings.ConfirmBeforeDisable = ConfirmBeforeDisable;
         Settings.LastScan = LastScan;

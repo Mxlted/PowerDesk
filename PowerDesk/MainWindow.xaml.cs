@@ -240,7 +240,8 @@ public partial class MainWindow : Window
         if (p.Maximized) WindowState = WindowState.Maximized;
     }
 
-    private void SavePlacement()
+    /// <summary>Captures the current window rectangle into settings. Also called by the shell on session end.</summary>
+    internal void SavePlacement()
     {
         try
         {

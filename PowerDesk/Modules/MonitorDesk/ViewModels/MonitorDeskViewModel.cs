@@ -27,6 +27,7 @@ public sealed partial class MonitorDeskViewModel : ObservableObject
     private readonly DisplayLayoutService _displayLayout = new();
     private readonly string _settingsPath;
     private MonitorDeskSettings _settings = new();
+    private bool _settingsLoaded;
 
     /// <summary>Confirmation prompt used before destructive actions; replaceable for tests.</summary>
     internal IConfirmationService Confirmation { get; set; } = new ConfirmationService();
@@ -88,6 +89,7 @@ public sealed partial class MonitorDeskViewModel : ObservableObject
         try
         {
             _settings = await _storage.LoadAsync(_settingsPath, () => new MonitorDeskSettings());
+            _settingsLoaded = true;
         }
         catch (Exception ex)
         {
@@ -107,7 +109,11 @@ public sealed partial class MonitorDeskViewModel : ObservableObject
         RaiseLayoutCounts();
     }
 
-    public async Task ShutdownAsync() => await SaveAsync();
+    /// <summary>Only saves when the settings were actually loaded, so a failed load cannot wipe saved layouts.</summary>
+    public async Task ShutdownAsync()
+    {
+        if (_settingsLoaded) await SaveAsync();
+    }
 
     private bool CanRefresh() => !IsBusy;
 
