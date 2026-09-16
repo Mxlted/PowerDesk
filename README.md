@@ -2,7 +2,7 @@
 
 A modular, local-first PC tool hub for Windows - inspired by Microsoft PowerToys, designed to grow one tool at a time.
 
-Current beta release: **v0.5.1**.
+Current beta release: **v0.5.2**.
 
 PowerDesk currently includes these built-in tools:
 
