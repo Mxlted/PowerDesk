@@ -79,6 +79,7 @@ public partial class App : Application
         base.OnStartup(e);
         StartActivationListener();
         Permissions.RelaunchHandler = () => RelaunchSelf(elevated: true);
+        Permissions.ShutdownHandler = () => Shell?.ForceClose();
 
         DispatcherUnhandledException += (_, args) =>
         {
@@ -105,7 +106,7 @@ public partial class App : Application
         Storage = new JsonStorageService(Logger);
         Icons = new IconService(Logger);
 
-        Settings = await Storage.LoadAsync(Core.Services.PathService.SettingsFile, () => new AppSettings());
+        Settings = await Storage.LoadAsync(PathService.SettingsFile, () => new AppSettings());
         ThemeService.Apply(Settings.Theme);
 
         // A portable exe gets moved and renamed; keep the Run entry pointing at wherever we are now,
@@ -113,7 +114,7 @@ public partial class App : Application
         try
         {
             if (StartupRegistration.Sync(Settings, Logger))
-                await Storage.SaveAsync(Core.Services.PathService.SettingsFile, Settings);
+                await SaveSettingsAsync();
         }
         catch (Exception ex) { Logger.Warn($"Startup registration sync: {ex.Message}"); }
 
@@ -139,7 +140,7 @@ public partial class App : Application
                 {
                     try { await m.ShutdownAsync(); } catch (Exception ex) { Logger.Error($"Module shutdown: {m.Id}", ex); }
                 }
-                await Storage.SaveAsync(Core.Services.PathService.SettingsFile, Settings);
+                await SaveSettingsAsync();
             }
             else
             {
@@ -232,7 +233,7 @@ public partial class App : Application
                 catch (Exception ex) { Logger.Error($"Module shutdown (session end): {m.Id}", ex); }
             }
             // JsonStorageService awaits with ConfigureAwait(false) throughout, so blocking here cannot deadlock.
-            Storage.SaveAsync(Core.Services.PathService.SettingsFile, Settings).GetAwaiter().GetResult();
+            SaveSettingsAsync().GetAwaiter().GetResult();
             Logger.Info("State persisted for session end.");
         }
         catch (Exception ex)
@@ -257,8 +258,8 @@ public partial class App : Application
         if (task.IsCompleted) task.GetAwaiter().GetResult();
     }
 
-    public async Task<bool> SaveSettingsAsync()
-        => await Storage.SaveAsync(Core.Services.PathService.SettingsFile, Settings);
+    public Task<bool> SaveSettingsAsync()
+        => Storage.SaveAsync(PathService.SettingsFile, Settings);
 
     protected override void OnExit(ExitEventArgs e)
     {

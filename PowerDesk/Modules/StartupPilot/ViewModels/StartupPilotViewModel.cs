@@ -844,10 +844,5 @@ public sealed partial class StartupPilotViewModel : ObservableObject
     }
 
     [RelayCommand]
-    public void RelaunchAsAdmin()
-    {
-        if (IsAdmin) { _status.Set("Already running as administrator.", StatusKind.Info); return; }
-        if (!_permissions.TryRelaunchAsAdmin()) _status.Set("Elevation cancelled.", StatusKind.Warning);
-        else App.Instance.Shell?.ForceClose();
-    }
+    public void RelaunchAsAdmin() => _permissions.RequestElevation(_status);
 }

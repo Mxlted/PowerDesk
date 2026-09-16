@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.Security.Principal;
+using PowerDesk.Core.Services;
 
 namespace PowerDesk.Core.Permissions;
 
@@ -27,6 +28,31 @@ public sealed class PermissionService
     /// lock before spawning, so the elevated copy never sees "PowerDesk is already running".
     /// </summary>
     public Func<bool>? RelaunchHandler { get; set; }
+
+    /// <summary>
+    /// Optional shell-provided routine that closes this instance once an elevated copy has been started.
+    /// </summary>
+    public Action? ShutdownHandler { get; set; }
+
+    /// <summary>
+    /// The single "Relaunch as administrator" flow every module and the Settings page share: reports
+    /// when elevation is unnecessary or was cancelled, and otherwise hands off to the elevated copy
+    /// by closing this instance.
+    /// </summary>
+    public void RequestElevation(StatusService status)
+    {
+        if (IsAdministrator)
+        {
+            status.Set("Already running as administrator.", StatusKind.Info);
+            return;
+        }
+        if (!TryRelaunchAsAdmin())
+        {
+            status.Set("Elevation cancelled.", StatusKind.Warning);
+            return;
+        }
+        ShutdownHandler?.Invoke();
+    }
 
     /// <summary>
     /// Relaunches PowerDesk with the runas verb. Returns true if a process was started; false on cancel or error.

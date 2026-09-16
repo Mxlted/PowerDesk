@@ -467,16 +467,7 @@ public sealed partial class PathEditorViewModel : ObservableObject
     }
 
     [RelayCommand]
-    private void RelaunchAsAdmin()
-    {
-        if (IsAdmin)
-        {
-            _status.Set("Already running as administrator.", StatusKind.Info);
-            return;
-        }
-        if (!_permissions.TryRelaunchAsAdmin()) _status.Set("Elevation cancelled.", StatusKind.Warning);
-        else App.Instance.Shell?.ForceClose();
-    }
+    private void RelaunchAsAdmin() => _permissions.RequestElevation(_status);
 
     /// <summary>Records the pre-save value unless it is identical to the newest backup for that scope.</summary>
     internal void AddBackup(PathScope scope, string value)

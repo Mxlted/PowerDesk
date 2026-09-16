@@ -15,7 +15,6 @@ public sealed class StartupPilotModule : IPowerDeskModule
     public string Id => "StartupPilot";
     public string DisplayName => "StartupPilot";
     public string Description => "See and control everything Windows runs at sign-in: registry, startup folder, tasks, and services.";
-    public string IconKey => "StartupPilot";
     // Filled 24x24 geometry (nonzero rule; holes wind the opposite way). Both the sidebar and the dashboard
     // render this with Fill only, so open stroke paths would be invisible or collapse into solid blobs.
     public string IconGeometry => "F1 M 12,2 L 5,12 H 10 V 22 L 19,10 H 13 Z";

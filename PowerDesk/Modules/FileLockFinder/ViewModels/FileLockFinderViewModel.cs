@@ -313,16 +313,7 @@ public sealed partial class FileLockFinderViewModel : ObservableObject
     }
 
     [RelayCommand]
-    private void RelaunchAsAdmin()
-    {
-        if (IsAdmin)
-        {
-            _status.Set("Already running as administrator.", StatusKind.Info);
-            return;
-        }
-        if (!_permissions.TryRelaunchAsAdmin()) _status.Set("Elevation cancelled.", StatusKind.Warning);
-        else App.Instance.Shell?.ForceClose();
-    }
+    private void RelaunchAsAdmin() => _permissions.RequestElevation(_status);
 
     private void NotifyProcessesChanged()
     {

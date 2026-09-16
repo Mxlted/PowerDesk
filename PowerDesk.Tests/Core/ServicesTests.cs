@@ -1,6 +1,7 @@
 using PowerDesk.Core.Logging;
 using PowerDesk.Core.Models;
 using PowerDesk.Core.Navigation;
+using PowerDesk.Core.Permissions;
 using PowerDesk.Core.Services;
 using PowerDesk.Core.Storage;
 
@@ -21,6 +22,33 @@ public sealed class ServicesTests
         Assert.Equal(StatusKind.Warning, status.Kind);
         Assert.Contains(nameof(StatusService.Message), changed);
         Assert.Contains(nameof(StatusService.Kind), changed);
+    }
+
+    [Fact]
+    public void PermissionService_RequestElevation_ReportsOutcomeAndHandsOffToShell()
+    {
+        var permissions = new PermissionService();
+        var status = new StatusService();
+        var shutdowns = 0;
+        permissions.ShutdownHandler = () => shutdowns++;
+
+        if (permissions.IsAdministrator)
+        {
+            permissions.RequestElevation(status);
+            Assert.Equal("Already running as administrator.", status.Message);
+            Assert.Equal(0, shutdowns);
+            return;
+        }
+
+        permissions.RelaunchHandler = () => false;
+        permissions.RequestElevation(status);
+        Assert.Equal("Elevation cancelled.", status.Message);
+        Assert.Equal(StatusKind.Warning, status.Kind);
+        Assert.Equal(0, shutdowns);
+
+        permissions.RelaunchHandler = () => true;
+        permissions.RequestElevation(status);
+        Assert.Equal(1, shutdowns);
     }
 
     [Fact]
@@ -116,7 +144,6 @@ public sealed class ServicesTests
         public string Id { get; }
         public string DisplayName => Id;
         public string Description => "";
-        public string IconKey => "";
         public string IconGeometry => "";
         public bool RequiresAdminForFullControl => false;
         public System.Windows.Controls.UserControl MainView => throw new NotSupportedException();

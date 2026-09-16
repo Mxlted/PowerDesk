@@ -222,15 +222,5 @@ public partial class SettingsPage : UserControl
     }
 
     private void RelaunchAdmin_Click(object sender, RoutedEventArgs e)
-    {
-        if (App.Instance.Permissions.IsAdministrator)
-        {
-            App.Instance.Status.Set("Already running as administrator.", StatusKind.Info);
-            return;
-        }
-        if (App.Instance.Permissions.TryRelaunchAsAdmin())
-            App.Instance.Shell?.ForceClose();
-        else
-            App.Instance.Status.Set("Elevation cancelled.", StatusKind.Warning);
-    }
+        => App.Instance.Permissions.RequestElevation(App.Instance.Status);
 }

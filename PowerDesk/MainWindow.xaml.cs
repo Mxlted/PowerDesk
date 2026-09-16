@@ -63,13 +63,9 @@ public partial class MainWindow : Window
             {
                 ShowInTaskbar = true;
             }
-            // Inform WindowSizer it can pause/resume auto-refresh.
-            app.WindowSizerModule?.ViewModel?.OnShellVisibilityChanged(WindowState != WindowState.Minimized && IsVisible);
+            NotifyShellVisibility();
         };
-        IsVisibleChanged += (_, _) =>
-        {
-            App.Instance.WindowSizerModule?.ViewModel?.OnShellVisibilityChanged(WindowState != WindowState.Minimized && IsVisible);
-        };
+        IsVisibleChanged += (_, _) => NotifyShellVisibility();
         Closing += (_, e) =>
         {
             var app = App.Instance;
@@ -130,6 +126,10 @@ public partial class MainWindow : Window
             SelectNav(target);
         };
     }
+
+    /// <summary>Tells WindowSizer whether anyone can see the shell, so it can pause or resume auto-refresh.</summary>
+    private void NotifyShellVisibility()
+        => App.Instance.WindowSizerModule?.ViewModel?.OnShellVisibilityChanged(WindowState != WindowState.Minimized && IsVisible);
 
     private void OnStatusChanged(object? sender, PropertyChangedEventArgs e) => RefreshStatus();
 

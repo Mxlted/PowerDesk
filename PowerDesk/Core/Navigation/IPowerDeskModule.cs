@@ -11,8 +11,6 @@ public interface IPowerDeskModule
     string Id { get; }
     string DisplayName { get; }
     string Description { get; }
-    /// <summary>Symbolic key for the module's icon (resolved by the shell into a glyph or graphic).</summary>
-    string IconKey { get; }
     /// <summary>Path-Data geometry for the module's nav/card icon. Returned directly to avoid
     /// shell-side switch tables that need editing whenever a new module ships.</summary>
     string IconGeometry { get; }
