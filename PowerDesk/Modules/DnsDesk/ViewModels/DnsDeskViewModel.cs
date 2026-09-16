@@ -103,13 +103,15 @@ public sealed partial class DnsDeskViewModel : ObservableObject
         SelectedProfile = Profiles.FirstOrDefault();
     }
 
-    /// <summary>Kicks off the first adapter scan. Safe to call more than once.</summary>
-    public void Initialize() => _ = RefreshAsync();
+    /// <summary>First adapter scan at startup: fills the grid without claiming the shared status bar.</summary>
+    public Task InitializeAsync() => RefreshCoreAsync(announce: false);
 
     private bool CanRefresh() => !IsBusy;
 
     [RelayCommand(CanExecute = nameof(CanRefresh))]
-    public async Task RefreshAsync()
+    public Task RefreshAsync() => RefreshCoreAsync(announce: true);
+
+    private async Task RefreshCoreAsync(bool announce)
     {
         // Adapter enumeration can take a noticeable time; keep the UI responsive and skip overlapping scans.
         if (Interlocked.Exchange(ref _refreshing, 1) == 1) return;
@@ -118,7 +120,8 @@ public sealed partial class DnsDeskViewModel : ObservableObject
         {
             var adapters = await Task.Run(() => _dns.GetAdapters());
             UiDispatcher.Invoke(() => ApplyAdapters(adapters));
-            _status.Set($"DnsDesk found {adapters.Count} adapter(s), {adapters.Count(a => a.IsUp)} online.", StatusKind.Success);
+            if (announce)
+                _status.Set($"DnsDesk found {adapters.Count} adapter(s), {adapters.Count(a => a.IsUp)} online.", StatusKind.Success);
         }
         catch (Exception ex)
         {

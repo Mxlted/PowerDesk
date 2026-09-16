@@ -130,12 +130,6 @@ public partial class App : Application
         Modules.Register(new FileLockFinderModule(Logger, Status, RecentActions, Permissions, Confirm));
         Modules.Register(new PathEditorModule(Logger, Storage, Status, RecentActions, Permissions, Confirm));
 
-        foreach (var m in Modules.Modules)
-        {
-            try { await m.InitializeAsync(); }
-            catch (Exception ex) { Logger.Error($"Module init failed: {m.Id}", ex); }
-        }
-
         Shell = new MainWindow();
         Shell.Closed += async (_, _) =>
         {
@@ -158,7 +152,7 @@ public partial class App : Application
 
         // System tray
         Tray = new TrayIconService(Logger);
-        Tray.Initialize();
+        Tray.Initialize(Modules.Modules.Select(m => (m.Id, m.DisplayName)).ToList());
         Tray.ShowRequested += (_, _) => ShowShell();
         Tray.ExitRequested += (_, _) => Shell?.ForceClose();
         Tray.OpenModuleRequested += (_, id) => { ShowShell(); Shell?.NavigateTo(id); };
@@ -173,6 +167,9 @@ public partial class App : Application
         {
             // Stay hidden; the tray icon is the way back in. Nothing to Show() yet.
             Shell.ShowInTaskbar = false;
+            // The window never fires StateChanged/IsVisibleChanged in this path, so tell WindowSizer
+            // explicitly that nobody is looking; otherwise it polls every window every 2 seconds for nothing.
+            WindowSizerModule.ViewModel.OnShellVisibilityChanged(false);
             Tray.ShowBalloon("PowerDesk started in the tray", "Click the tray icon to open it.");
         }
         else if (Settings.StartMinimized)
@@ -185,6 +182,20 @@ public partial class App : Application
         {
             Shell.Show();
         }
+
+        // Initialize modules only now that the shell is on screen. Previously the window did not
+        // appear until the startup scan, network adapter enumeration and PATH read had all finished,
+        // which read as a slow launch. Modules are independent by design so they load concurrently;
+        // a failure in one is logged and never blocks the others.
+        Status.Set("Loading tools…");
+        await Task.WhenAll(Modules.Modules.Select(InitializeModuleAsync));
+        Logger.Info("All modules initialized.");
+    }
+
+    private async Task InitializeModuleAsync(IPowerDeskModule module)
+    {
+        try { await module.InitializeAsync(); }
+        catch (Exception ex) { Logger.Error($"Module init failed: {module.Id}", ex); }
     }
 
     public void ShowShell()

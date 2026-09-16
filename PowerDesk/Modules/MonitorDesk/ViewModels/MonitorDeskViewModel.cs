@@ -12,6 +12,7 @@ using PowerDesk.Core.Storage;
 using PowerDesk.Modules.MonitorDesk.Models;
 using PowerDesk.Modules.MonitorDesk.Services;
 using System.IO;
+using Microsoft.Win32;
 using OpenFileDialog = Microsoft.Win32.OpenFileDialog;
 using SaveFileDialog = Microsoft.Win32.SaveFileDialog;
 using Screen = System.Windows.Forms.Screen;
@@ -105,20 +106,39 @@ public sealed partial class MonitorDeskViewModel : ObservableObject
             LayoutPresets.Add(preset);
         }
         SelectedLayout = LayoutPresets.FirstOrDefault();
-        Refresh();
+        RefreshCore(announce: false);
         RaiseLayoutCounts();
+
+        // Follow the OS: plugging a monitor in, changing resolution in Windows Settings or another
+        // tool re-arranging displays should update the grid without a manual Refresh.
+        try { SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged; }
+        catch (Exception ex) { _log.Warn($"MonitorDesk: display change notifications unavailable: {ex.Message}"); }
     }
 
     /// <summary>Only saves when the settings were actually loaded, so a failed load cannot wipe saved layouts.</summary>
     public async Task ShutdownAsync()
     {
+        try { SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged; } catch { }
         if (_settingsLoaded) await SaveAsync();
+    }
+
+    private void OnDisplaySettingsChanged(object? sender, EventArgs e)
+    {
+        // Raised on the SystemEvents thread; the collections must be touched on the dispatcher.
+        UiDispatcher.Post(() =>
+        {
+            if (IsBusy) return; // an apply in progress refreshes when it finishes
+            RefreshCore(announce: false);
+        });
     }
 
     private bool CanRefresh() => !IsBusy;
 
     [RelayCommand(CanExecute = nameof(CanRefresh))]
-    public void Refresh()
+    public void Refresh() => RefreshCore(announce: true);
+
+    /// <param name="announce">False when the refresh is a side effect (startup, apply, OS notification) whose own status message must stay visible.</param>
+    private void RefreshCore(bool announce)
     {
         try
         {
@@ -134,7 +154,7 @@ public sealed partial class MonitorDeskViewModel : ObservableObject
             LastRefresh = DateTime.Now;
             RaiseCounts();
             SelectMatchingLayout();
-            _status.Set($"MonitorDesk refreshed {Monitors.Count} display(s).", StatusKind.Success);
+            if (announce) _status.Set($"MonitorDesk refreshed {Monitors.Count} display(s).", StatusKind.Success);
         }
         catch (Exception ex)
         {
@@ -546,7 +566,8 @@ public sealed partial class MonitorDeskViewModel : ObservableObject
         finally
         {
             IsBusy = false;
-            Refresh();
+            // Quiet: the apply outcome set just above must stay in the status bar, not "refreshed N display(s)".
+            RefreshCore(announce: false);
         }
     }
 

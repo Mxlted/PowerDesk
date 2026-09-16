@@ -124,7 +124,7 @@ public sealed partial class PathEditorViewModel : ObservableObject
             Backups.Clear();
             foreach (var backup in _settings.Backups.OrderByDescending(b => b.Timestamp)) Backups.Add(backup);
             OnPropertyChanged(nameof(HasBackups));
-            LoadPathCore();
+            LoadPathCore(announce: false);
         });
     }
 
@@ -158,7 +158,8 @@ public sealed partial class PathEditorViewModel : ObservableObject
         LoadPathCore();
     }
 
-    private void LoadPathCore()
+    /// <param name="announce">False for the startup load, which must not take over the shared status bar.</param>
+    private void LoadPathCore(bool announce = true)
     {
         try
         {
@@ -167,7 +168,7 @@ public sealed partial class PathEditorViewModel : ObservableObject
             ReplaceEntries(PathLogic.Split(value));
             LastLoaded = DateTime.Now;
             IsDirty = false;
-            _status.Set($"{SelectedScope} PATH loaded ({Entries.Count} entries).", StatusKind.Success);
+            if (announce) _status.Set($"{SelectedScope} PATH loaded ({Entries.Count} entries).", StatusKind.Success);
         }
         catch (Exception ex)
         {

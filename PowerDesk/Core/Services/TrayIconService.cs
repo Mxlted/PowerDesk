@@ -29,7 +29,8 @@ public sealed class TrayIconService : IDisposable
 
     public TrayIconService(ILogger log) => _log = log;
 
-    public void Initialize()
+    /// <param name="modules">Registered tools, in sidebar order; each gets an "Open …" entry in the menu.</param>
+    public void Initialize(IReadOnlyList<(string Id, string DisplayName)> modules)
     {
         try
         {
@@ -41,7 +42,7 @@ public sealed class TrayIconService : IDisposable
             };
             // A single left click already shows the shell; DoubleClick would fire it a second time.
             _icon.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) ShowRequested?.Invoke(this, EventArgs.Empty); };
-            _icon.ContextMenuStrip = BuildMenu();
+            _icon.ContextMenuStrip = BuildMenu(modules);
         }
         catch (Exception ex)
         {
@@ -55,14 +56,23 @@ public sealed class TrayIconService : IDisposable
         catch { }
     }
 
-    private ContextMenuStrip BuildMenu()
+    private ContextMenuStrip BuildMenu(IReadOnlyList<(string Id, string DisplayName)> modules)
     {
         var menu = new ContextMenuStrip();
         menu.Items.Add(new ToolStripMenuItem("Show PowerDesk", null, (_, _) => ShowRequested?.Invoke(this, EventArgs.Empty)));
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add(new ToolStripMenuItem("Open WindowSizer", null, (_, _) => OpenModuleRequested?.Invoke(this, "WindowSizer")));
-        menu.Items.Add(new ToolStripMenuItem("Open StartupPilot", null, (_, _) => OpenModuleRequested?.Invoke(this, "StartupPilot")));
-        menu.Items.Add(new ToolStripSeparator());
+        // One entry per registered tool, so new modules show up here without touching the shell.
+        if (modules.Count > 0)
+        {
+            var open = new ToolStripMenuItem("Open tool");
+            foreach (var (id, name) in modules)
+            {
+                var moduleId = id;
+                open.DropDownItems.Add(new ToolStripMenuItem(name, null, (_, _) => OpenModuleRequested?.Invoke(this, moduleId)));
+            }
+            menu.Items.Add(open);
+            menu.Items.Add(new ToolStripSeparator());
+        }
         menu.Items.Add(new ToolStripMenuItem("Snap foreground left",  null, (_, _) => SnapForegroundLeftRequested?.Invoke(this,  EventArgs.Empty)));
         menu.Items.Add(new ToolStripMenuItem("Snap foreground right", null, (_, _) => SnapForegroundRightRequested?.Invoke(this, EventArgs.Empty)));
         menu.Items.Add(new ToolStripMenuItem("Rescan startup items",  null, (_, _) => RescanStartupRequested?.Invoke(this, EventArgs.Empty)));

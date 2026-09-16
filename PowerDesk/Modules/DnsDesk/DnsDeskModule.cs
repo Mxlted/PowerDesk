@@ -30,7 +30,7 @@ public sealed class DnsDeskModule : IPowerDeskModule
     }
 
     // The scan runs off the UI thread; awaiting it keeps startup ordering deterministic without blocking.
-    public Task InitializeAsync() => ViewModel.RefreshAsync();
+    public Task InitializeAsync() => ViewModel.InitializeAsync();
 
     public Task ShutdownAsync() => Task.CompletedTask;
 }
