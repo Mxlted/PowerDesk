@@ -224,18 +224,26 @@ public sealed partial class WindowSizerViewModel : ObservableObject
     /// <summary>Kick off a refresh without awaiting it; coalesces if one is already running.</summary>
     public void Refresh() => QueueRefresh();
 
+    /// <summary>
+    /// Background refresh (timer ticks, post-action reloads). Deliberately does not raise
+    /// <see cref="IsBusy"/>: enumeration takes a few milliseconds, and flashing the progress bar
+    /// every two seconds made the list look permanently unsettled.
+    /// </summary>
     private void QueueRefresh()
     {
-        _ = RefreshAsync();
+        _ = RefreshCoreAsync(showBusy: false);
     }
 
+    /// <summary>Explicit refresh (button / F5): shows the busy indicator so the click has visible feedback.</summary>
     [RelayCommand]
-    public async Task RefreshAsync()
+    public Task RefreshAsync() => RefreshCoreAsync(showBusy: true);
+
+    private async Task RefreshCoreAsync(bool showBusy)
     {
         if (_shutdown) return;
         if (_refreshRunning) { _refreshQueued = true; return; }
         _refreshRunning = true;
-        IsBusy = true;
+        if (showBusy) IsBusy = true;
         try
         {
             do

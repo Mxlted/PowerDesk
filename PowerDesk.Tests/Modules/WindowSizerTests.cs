@@ -217,7 +217,29 @@ public sealed class WindowSizerTests
         Assert.Equal("Ctrl+F5", new HotkeyBinding { Modifiers = MOD_CONTROL, VirtualKey = 0x74 }.DisplayText);
         Assert.Equal("Alt+C", new HotkeyBinding { Modifiers = MOD_ALT, VirtualKey = 0x43 }.DisplayText);
         Assert.Equal("Alt+7", new HotkeyBinding { Modifiers = MOD_ALT, VirtualKey = 0x37 }.DisplayText);
-        Assert.Equal("Win+VK_0xBA", new HotkeyBinding { Modifiers = MOD_WIN, VirtualKey = 0xBA }.DisplayText);
+        Assert.Equal("Win+;", new HotkeyBinding { Modifiers = MOD_WIN, VirtualKey = 0xBA }.DisplayText);
+    }
+
+    [Theory]
+    [InlineData(0x20u, "Space")]
+    [InlineData(0x0Du, "Enter")]
+    [InlineData(0x08u, "Backspace")]
+    [InlineData(0x2Eu, "Delete")]
+    [InlineData(0x24u, "Home")]
+    [InlineData(0x22u, "PageDown")]
+    [InlineData(0x60u, "Num0")]
+    [InlineData(0x69u, "Num9")]
+    [InlineData(0x6Bu, "Num+")]
+    [InlineData(0x70u, "F1")]
+    [InlineData(0x7Bu, "F12")]
+    [InlineData(0x87u, "F24")]
+    [InlineData(0xC0u, "`")]
+    [InlineData(0xDCu, "\\")]
+    [InlineData(0xB3u, "MediaPlayPause")]
+    [InlineData(0xFEu, "VK_0xFE")]
+    public void KeyNameFromVk_NamesEveryCommonKey(uint vk, string expected)
+    {
+        Assert.Equal(expected, HotkeyBinding.KeyNameFromVk(vk));
     }
 
     [Fact]
