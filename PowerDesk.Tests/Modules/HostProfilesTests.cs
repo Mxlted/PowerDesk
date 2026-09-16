@@ -187,6 +187,8 @@ public sealed class HostProfilesTests
             var written = File.ReadAllBytes(hosts);
             Assert.Equal(Encoding.ASCII.GetBytes("# new\r\n10.0.0.1 a\r\n"), written);
             Assert.True((File.GetAttributes(hosts) & FileAttributes.ReadOnly) != 0, "read-only attribute should be restored");
+            Assert.Empty(Directory.GetFiles(dir, "*.tmp"));
+            Assert.Equal("# new\r\n10.0.0.1 a\r\n", svc.Read());
         }
         finally
         {
@@ -211,6 +213,7 @@ public sealed class HostProfilesTests
             var backup = svc.WriteWithBackup("1.1.1.1 one", Path.Combine(dir, "backups"), DateTime.Now);
             Assert.Null(backup);
             Assert.Equal("1.1.1.1 one\r\n", File.ReadAllText(hosts));
+            Assert.Empty(Directory.GetFiles(dir, "*.tmp"));
         }
         finally
         {

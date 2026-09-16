@@ -27,15 +27,18 @@ internal sealed class HostsFileService
 
     /// <summary>
     /// Backs up the current file (if any) into <paramref name="backupDirectory"/>, then writes the normalized content
-    /// as UTF-8 without BOM with CRLF line endings. A read-only attribute is cleared for the write and restored after.
+    /// as UTF-8 without BOM with CRLF line endings. The content is staged in a sibling temp file and swapped into
+    /// place, so a failure mid-write (disk full, antivirus grabbing the handle) can never leave Windows with a
+    /// truncated hosts file. A read-only attribute is cleared for the swap and restored after.
     /// Returns the backup path, or null when there was nothing to back up.
     /// </summary>
     public string? WriteWithBackup(string? content, string backupDirectory, DateTime timestamp)
     {
         var normalized = HostProfilesLogic.NormalizeForWrite(content);
         string? backupPath = null;
+        var exists = File.Exists(HostsPath);
 
-        if (File.Exists(HostsPath))
+        if (exists)
         {
             Directory.CreateDirectory(backupDirectory);
             backupPath = Path.Combine(backupDirectory, HostProfilesLogic.BackupFileName(timestamp));
@@ -43,7 +46,7 @@ internal sealed class HostsFileService
         }
 
         FileAttributes? original = null;
-        if (File.Exists(HostsPath))
+        if (exists)
         {
             var attributes = File.GetAttributes(HostsPath);
             if ((attributes & FileAttributes.ReadOnly) != 0)
@@ -53,12 +56,24 @@ internal sealed class HostsFileService
             }
         }
 
+        var temp = HostsPath + ".powerdesk.tmp";
         try
         {
-            File.WriteAllText(HostsPath, normalized, HostProfilesLogic.WriteEncoding);
+            File.WriteAllText(temp, normalized, HostProfilesLogic.WriteEncoding);
+            if (exists)
+            {
+                // ReplaceFile keeps the original's identity (creation time, DACL, streams) and is atomic on NTFS.
+                try { File.Replace(temp, HostsPath, destinationBackupFileName: null, ignoreMetadataErrors: true); }
+                catch (PlatformNotSupportedException) { File.Move(temp, HostsPath, overwrite: true); }
+            }
+            else
+            {
+                File.Move(temp, HostsPath);
+            }
         }
         finally
         {
+            try { if (File.Exists(temp)) File.Delete(temp); } catch { }
             if (original is not null)
             {
                 try { File.SetAttributes(HostsPath, original.Value); } catch { }
