@@ -2,7 +2,6 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Windows;
-using Microsoft.Win32;
 using PowerDesk.Core.Models;
 using PowerDesk.Core.Services;
 using UserControl = System.Windows.Controls.UserControl;
@@ -17,8 +16,6 @@ namespace PowerDesk.Views;
 
 public partial class SettingsPage : UserControl
 {
-    private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
-    private const string RunValue = "PowerDesk";
     private bool _loading = true;
 
     public SettingsPage()
@@ -33,6 +30,9 @@ public partial class SettingsPage : UserControl
 
         StartMinimizedBox.IsChecked = app.Settings.StartMinimized;
         TrayOnCloseBox.IsChecked = app.Settings.MinimizeToTrayOnClose;
+        // The registry is the truth for run-at-startup: the entry may have been removed or disabled
+        // from Task Manager / Autoruns since the preference was saved.
+        app.Settings.RunAtWindowsStartup = StartupRegistration.IsEnabled();
         RunAtStartupBox.IsChecked = app.Settings.RunAtWindowsStartup;
         GlobalHotkeysBox.IsChecked = app.Settings.GlobalHotkeysEnabled;
         LogPathRun.Text = app.Logger.LogFilePath;
@@ -93,22 +93,7 @@ public partial class SettingsPage : UserControl
         // succeeded. If the subsequent save fails we restore the registry to keep the two in sync.
         try
         {
-            using var key = Registry.CurrentUser.CreateSubKey(RunKey, writable: true)!;
-            if (enable)
-            {
-                var exe = Process.GetCurrentProcess().MainModule?.FileName ?? string.Empty;
-                if (string.IsNullOrEmpty(exe))
-                {
-                    app.Status.Set("Could not determine PowerDesk's exe path.", StatusKind.Error);
-                    _loading = true; RunAtStartupBox.IsChecked = previous; _loading = false;
-                    return;
-                }
-                key.SetValue(RunValue, $"\"{exe}\"");
-            }
-            else
-            {
-                try { key.DeleteValue(RunValue, throwOnMissingValue: false); } catch { }
-            }
+            StartupRegistration.SetEnabled(enable);
         }
         catch (Exception ex)
         {
@@ -130,22 +115,7 @@ public partial class SettingsPage : UserControl
         }
 
         // Save failed: roll the registry back so what's on disk matches what's persisted.
-        try
-        {
-            using var key = Registry.CurrentUser.CreateSubKey(RunKey, writable: true);
-            if (key is not null)
-            {
-                if (previous)
-                {
-                    var exe = Process.GetCurrentProcess().MainModule?.FileName ?? string.Empty;
-                    if (!string.IsNullOrEmpty(exe)) key.SetValue(RunValue, $"\"{exe}\"");
-                }
-                else
-                {
-                    key.DeleteValue(RunValue, throwOnMissingValue: false);
-                }
-            }
-        }
+        try { StartupRegistration.SetEnabled(previous); }
         catch (Exception revertEx) { app.Logger.Error("Toggle startup revert", revertEx); }
         app.Settings.RunAtWindowsStartup = previous;
         _loading = true; RunAtStartupBox.IsChecked = previous; _loading = false;
@@ -227,12 +197,7 @@ public partial class SettingsPage : UserControl
             // Run-at-startup is kept in sync with the registry; flip it off explicitly below.
 
             // Best-effort: also wipe the registry "Run" entry so a reset really is a reset.
-            try
-            {
-                using var key = Registry.CurrentUser.CreateSubKey(RunKey, writable: true);
-                key?.DeleteValue(RunValue, throwOnMissingValue: false);
-            }
-            catch { }
+            try { StartupRegistration.SetEnabled(false); } catch { }
             app.Settings.RunAtWindowsStartup = false;
 
             // Delete file contents but keep the folder so the running app remains writable.

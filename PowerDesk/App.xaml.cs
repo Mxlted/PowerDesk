@@ -104,6 +104,15 @@ public partial class App : Application
         Settings = await Storage.LoadAsync(Core.Services.PathService.SettingsFile, () => new AppSettings());
         ThemeService.Apply(Settings.Theme);
 
+        // A portable exe gets moved and renamed; keep the Run entry pointing at wherever we are now,
+        // and let the saved preference follow whatever Task Manager / other tools did to the entry.
+        try
+        {
+            if (StartupRegistration.Sync(Settings, Logger))
+                await Storage.SaveAsync(Core.Services.PathService.SettingsFile, Settings);
+        }
+        catch (Exception ex) { Logger.Warn($"Startup registration sync: {ex.Message}"); }
+
         // Register feature modules. Add more here as the hub grows.
         WindowSizerModule = new WindowSizerModule(Logger, Storage, Status, RecentActions, Icons, Settings);
         StartupPilotModule = new StartupPilotModule(Logger, Storage, Status, RecentActions, Icons, Permissions, Confirm);
