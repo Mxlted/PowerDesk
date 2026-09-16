@@ -11,7 +11,6 @@ using PowerDesk.Core.Logging;
 using PowerDesk.Core.Services;
 using PowerDesk.Modules.HashDesk.Models;
 using PowerDesk.Modules.HashDesk.Services;
-using Clipboard = System.Windows.Clipboard;
 using OpenFileDialog = Microsoft.Win32.OpenFileDialog;
 
 namespace PowerDesk.Modules.HashDesk.ViewModels;
@@ -380,15 +379,9 @@ public sealed partial class HashDeskViewModel : ObservableObject
             _status.Set("Nothing to copy.", StatusKind.Warning);
             return;
         }
-        try
-        {
-            Clipboard.SetText(text);
+        if (ClipboardService.TrySetText(text))
             _status.Set(message, StatusKind.Success);
-        }
-        catch (Exception ex)
-        {
-            _log.Error("Copy hash", ex);
-            _status.Set("Could not copy to clipboard.", StatusKind.Warning);
-        }
+        else
+            _status.Set("Could not copy to clipboard (it is busy). Try again.", StatusKind.Warning);
     }
 }

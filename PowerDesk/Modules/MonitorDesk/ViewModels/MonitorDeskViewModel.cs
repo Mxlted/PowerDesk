@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Linq;
-using System.Threading;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -13,7 +12,6 @@ using PowerDesk.Core.Storage;
 using PowerDesk.Modules.MonitorDesk.Models;
 using PowerDesk.Modules.MonitorDesk.Services;
 using System.IO;
-using Clipboard = System.Windows.Clipboard;
 using OpenFileDialog = Microsoft.Win32.OpenFileDialog;
 using SaveFileDialog = Microsoft.Win32.SaveFileDialog;
 using Screen = System.Windows.Forms.Screen;
@@ -210,35 +208,15 @@ public sealed partial class MonitorDeskViewModel : ObservableObject
             return;
         }
 
-        try
+        var lines = Monitors.Select(m => $"{m.DisplayLabel} | {m.DeviceName} | {m.PrimaryLabel} | {m.BoundsLabel} | work {m.WorkAreaLabel} | {m.BitsPerPixel} bpp");
+        if (ClipboardService.TrySetText(string.Join(Environment.NewLine, lines)))
         {
-            var lines = Monitors.Select(m => $"{m.DisplayLabel} | {m.DeviceName} | {m.PrimaryLabel} | {m.BoundsLabel} | work {m.WorkAreaLabel} | {m.BitsPerPixel} bpp");
-            SetClipboardText(string.Join(Environment.NewLine, lines));
             _recent.Add("MonitorDesk", $"Copied {Monitors.Count} monitor record(s).");
             _status.Set("Monitor summary copied.", StatusKind.Success);
         }
-        catch (Exception ex)
+        else
         {
-            _log.Error("MonitorDesk copy", ex);
             _status.Set("Could not copy monitor summary (clipboard busy).", StatusKind.Warning);
-        }
-    }
-
-    /// <summary>Clipboard access can fail transiently with CLIPBRD_E_CANT_OPEN while another app holds it; retry briefly.</summary>
-    private static void SetClipboardText(string text)
-    {
-        const int attempts = 4;
-        for (var i = 1; ; i++)
-        {
-            try
-            {
-                Clipboard.SetDataObject(text, true);
-                return;
-            }
-            catch (Exception) when (i < attempts)
-            {
-                Thread.Sleep(40 * i);
-            }
         }
     }
 

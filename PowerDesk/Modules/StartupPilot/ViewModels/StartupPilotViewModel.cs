@@ -16,7 +16,6 @@ using PowerDesk.Core.Services;
 using PowerDesk.Core.Storage;
 using PowerDesk.Modules.StartupPilot.Models;
 using PowerDesk.Modules.StartupPilot.Services;
-using Clipboard = System.Windows.Clipboard;
 
 namespace PowerDesk.Modules.StartupPilot.ViewModels;
 
@@ -769,12 +768,8 @@ public sealed partial class StartupPilotViewModel : ObservableObject
     {
         item ??= SelectedItem;
         if (item is null) return;
-        try { Clipboard.SetText(item.CommandLine); _status.Set("Command line copied.", StatusKind.Success); }
-        catch (Exception ex)
-        {
-            _log.Error("Copy", ex);
-            _status.Set("Clipboard is busy; try again.", StatusKind.Warning);
-        }
+        if (ClipboardService.TrySetText(item.CommandLine)) _status.Set("Command line copied.", StatusKind.Success);
+        else _status.Set("Clipboard is busy; try again.", StatusKind.Warning);
     }
 
     [RelayCommand]

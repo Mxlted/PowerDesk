@@ -2,13 +2,11 @@ using System;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Runtime.InteropServices;
-using System.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using PowerDesk.Core.Logging;
 using PowerDesk.Core.Services;
 using PowerDesk.Modules.ColorPicker.Services;
-using Clipboard = System.Windows.Clipboard;
 using ColorDialog = System.Windows.Forms.ColorDialog;
 using DialogResult = System.Windows.Forms.DialogResult;
 using DrawingColor = System.Drawing.Color;
@@ -259,34 +257,10 @@ public sealed partial class ColorPickerViewModel : ObservableObject
 
     private void Copy(string text, string message)
     {
-        try
-        {
-            SetClipboardText(text);
+        if (ClipboardService.TrySetText(text))
             _status.Set(message, StatusKind.Success);
-        }
-        catch (Exception ex)
-        {
-            _log.Error("Copy color", ex);
+        else
             _status.Set("Could not copy color (clipboard is busy). Try again.", StatusKind.Warning);
-        }
-    }
-
-    /// <summary>Clipboard access fails transiently (CLIPBRD_E_CANT_OPEN) while another app holds it; retry briefly.</summary>
-    private static void SetClipboardText(string text)
-    {
-        const int attempts = 4;
-        for (var i = 1; ; i++)
-        {
-            try
-            {
-                Clipboard.SetDataObject(text, true);
-                return;
-            }
-            catch (Exception) when (i < attempts)
-            {
-                Thread.Sleep(40 * i);
-            }
-        }
     }
 
     private static IWin32Window? TryGetShellOwner()

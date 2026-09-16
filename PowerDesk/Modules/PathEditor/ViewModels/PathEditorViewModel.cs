@@ -14,7 +14,6 @@ using PowerDesk.Core.Services;
 using PowerDesk.Core.Storage;
 using PowerDesk.Modules.PathEditor.Models;
 using PowerDesk.Modules.PathEditor.Services;
-using Clipboard = System.Windows.Clipboard;
 using DialogResult = System.Windows.Forms.DialogResult;
 using FolderBrowserDialog = System.Windows.Forms.FolderBrowserDialog;
 
@@ -460,16 +459,10 @@ public sealed partial class PathEditorViewModel : ObservableObject
     [RelayCommand]
     private void CopyRawPath()
     {
-        try
-        {
-            Clipboard.SetText(RawPath);
+        if (ClipboardService.TrySetText(RawPath))
             _status.Set("PATH copied to the clipboard.", StatusKind.Success);
-        }
-        catch (Exception ex)
-        {
-            _log.Error("Copy PATH", ex);
-            _status.Set("Could not copy PATH.", StatusKind.Warning);
-        }
+        else
+            _status.Set("Could not copy PATH (clipboard is busy). Try again.", StatusKind.Warning);
     }
 
     [RelayCommand]

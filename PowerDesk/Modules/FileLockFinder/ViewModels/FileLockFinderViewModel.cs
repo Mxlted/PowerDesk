@@ -13,7 +13,6 @@ using PowerDesk.Core.Permissions;
 using PowerDesk.Core.Services;
 using PowerDesk.Modules.FileLockFinder.Models;
 using PowerDesk.Modules.FileLockFinder.Services;
-using Clipboard = System.Windows.Clipboard;
 using DialogResult = System.Windows.Forms.DialogResult;
 using FolderBrowserDialog = System.Windows.Forms.FolderBrowserDialog;
 using OpenFileDialog = Microsoft.Win32.OpenFileDialog;
@@ -204,16 +203,10 @@ public sealed partial class FileLockFinderViewModel : ObservableObject
             _status.Set("Select a process first.", StatusKind.Warning);
             return;
         }
-        try
-        {
-            Clipboard.SetText(SelectedProcess.ProcessId.ToString());
+        if (ClipboardService.TrySetText(SelectedProcess.ProcessId.ToString()))
             _status.Set("Process ID copied.", StatusKind.Success);
-        }
-        catch (Exception ex)
-        {
-            _log.Error("Copy process id", ex);
-            _status.Set("Could not copy process ID.", StatusKind.Warning);
-        }
+        else
+            _status.Set("Could not copy process ID (clipboard is busy). Try again.", StatusKind.Warning);
     }
 
     private bool CanOpenLocation => !string.IsNullOrWhiteSpace(SelectedProcess?.ProcessPath);

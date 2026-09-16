@@ -5,7 +5,6 @@ using System.Windows;
 using PowerDesk.Core.Services;
 using UserControl = System.Windows.Controls.UserControl;
 using Button = System.Windows.Controls.Button;
-using Clipboard = System.Windows.Clipboard;
 
 namespace PowerDesk.Views;
 
@@ -53,15 +52,9 @@ public partial class AboutPage : UserControl
             $"Theme: {app.Settings.Theme}\n" +
             $"Modules: {string.Join(", ", app.Modules.Modules.Select(m => m.Id))}\n" +
             $"Data: {PathService.Root}";
-        try
-        {
-            Clipboard.SetDataObject(text, copy: true);
+        if (ClipboardService.TrySetText(text))
             app.Status.Set("Diagnostics copied to clipboard.", StatusKind.Success);
-        }
-        catch (Exception ex)
-        {
-            app.Logger.Warn($"Clipboard unavailable: {ex.Message}");
+        else
             app.Status.Set("Clipboard is busy; try again.", StatusKind.Warning);
-        }
     }
 }

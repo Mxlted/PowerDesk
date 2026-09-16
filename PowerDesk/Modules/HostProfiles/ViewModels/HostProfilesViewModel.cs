@@ -12,7 +12,6 @@ using PowerDesk.Core.Services;
 using PowerDesk.Core.Storage;
 using PowerDesk.Modules.HostProfiles.Models;
 using PowerDesk.Modules.HostProfiles.Services;
-using Clipboard = System.Windows.Clipboard;
 using OpenFileDialog = Microsoft.Win32.OpenFileDialog;
 using SaveFileDialog = Microsoft.Win32.SaveFileDialog;
 
@@ -427,16 +426,10 @@ public sealed partial class HostProfilesViewModel : ObservableObject
     [RelayCommand]
     private void CopyHostsPath()
     {
-        try
-        {
-            Clipboard.SetText(HostsPath);
+        if (ClipboardService.TrySetText(HostsPath))
             _status.Set("Hosts path copied.", StatusKind.Success);
-        }
-        catch (Exception ex)
-        {
-            _log.Error("Copy hosts path", ex);
-            _status.Set("Could not copy hosts path.", StatusKind.Warning);
-        }
+        else
+            _status.Set("Could not copy hosts path (clipboard is busy). Try again.", StatusKind.Warning);
     }
 
     [RelayCommand]
